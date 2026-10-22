@@ -1,0 +1,6 @@
+# extracted game data and local state never belong in the repo
+content/
+*.db
+*.pem
+__pycache__/
+*.pyc
