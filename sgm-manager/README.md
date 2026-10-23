@@ -6,21 +6,29 @@ internet. It also includes an **account editor** for currencies, fighters, moves
 progress.
 
 ```
- Skullgirls ──DNS──► 10.111.222.2 (manager's resolver) ── game API host → 10.111.222.3
-     │                                                    other names → your real DNS
-     └─TLS──► 10.111.222.3:443 ──(VPN interface, address rewrite)──► embedded server
+ Skullgirls ──DNS──► 10.111.222.2 (manager's resolver)   game API host → 10.111.222.3
+     │                                                    CDN host      → 10.111.222.4
+     │                                                    other names   → the phone's normal DNS
+     ├─TLS──► 10.111.222.3:443 ──┐
+     └─TLS──► 10.111.222.4:443 ──┴─(VPN interface, address rewrite)──► embedded server / CDN stand-in
 ```
 
 The manager opens a local VPN that **only the game is routed through**, and only for a few
-virtual addresses. The game's own lookups for its API host are answered with a virtual address;
-connections to it are handed to the embedded server by rewriting packet addresses on the VPN
-interface (no traffic leaves the phone). Everything else the game or any other app does uses the
-normal network. No root and no APK modification: the game accepts the server's self-signed
-certificate (see `../sgm-server/docs/PROTOCOL.md`, *TLS*).
+virtual addresses. The game's lookups for its API and download (CDN) hosts are answered with
+virtual addresses; connections to them are handed to the embedded server by rewriting packet
+addresses on the VPN interface. Everything else the game or any other app does uses the normal
+network. No root and no APK modification: the game accepts the server's self-signed certificate
+(see `../sgm-server/docs/PROTOCOL.md`, *TLS*).
+
+The CDN stand-in matters even with internet: before talking to the API, the title screen
+downloads `maintenanceMode.json` from the CDN, and a connection failure there is **error 867**.
+The manager answers it locally (an HTTP error means "no maintenance" to the game), passes other
+downloads through to the real CDN while streaming them, keeps copies, and serves the copies when
+the CDN cannot be reached.
 
 ## Using it
 
-1. Install the game (Skullgirls 8.11.0, `com.autumn.skullgirls`) and the manager APK.
+1. Install the game (Skullgirls 8.11.x, `com.autumn.skullgirls`) and the manager APK.
 2. Open **SGM Manager → Import game data from installed Skullgirls**. The manager reads the
    game's design data (characters, acts, loot tables…) straight from the installed APK — about
    a minute. Alternatively import a zip of the JSON files made with
@@ -29,11 +37,13 @@ certificate (see `../sgm-server/docs/PROTOCOL.md`, *TLS*).
 4. Close Skullgirls completely and launch it (the button in the manager works too). Log in as
    guest: a new account is created with the starting team.
 
-**Offline-ready mode** (checkbox) additionally routes the game's asset CDN and its "is there
-internet?" checks through the manager: every file the game downloads while online is cached on
-the phone and served from there later, and the connectivity checks get a local answer, so the
-game can start with no connection once its downloads have been cached. Leave it off if you only
-want the private server.
+**Playing without internet.** At every start the game re-downloads three small index files
+(`vram.bytes`, `fingerprints.bytes`, `Android/platform_fingerprints.bytes`) and then any asset
+bundle it is missing. The manager always keeps copies of the index files, and of every bundle
+too while *Keep a copy of everything the game downloads* is ticked (on by default; the size is
+shown on the main screen). Once the game has started at least once through the manager while
+the official CDN was working, it can start again without internet. The status line *Official
+download server* tells whether the real CDN answers.
 
 ### Account editor
 
@@ -61,8 +71,10 @@ return to the title screen or restart the game to see the changes.
 * Android **Private DNS** set to a specific provider (*Settings → Network → Private DNS →
   hostname*) bypasses the manager's resolver; use *Automatic* or *Off*. The manager warns about it.
 * Only one VPN app can be active at a time.
-* Offline mode can only serve assets that were downloaded through the manager at least once
-  (or that the game had already stored). Updates the game wants that were never cached fail.
+* Without internet the manager can only serve files that went through it at least once. If the
+  official CDN is already gone and nothing was saved, the maintenance check still passes, but the
+  game's start-up download step has nothing to fetch; whether it then continues with the files it
+  had stored before depends on the game.
 * Same limits as the server: no PvP, guilds, chat, raid boss or Mission Control.
 
 ## Desktop server
@@ -101,7 +113,7 @@ version with `python tools/dump_typetrees.py <game.xapk> -o app/assets/typetrees
 |---|---|
 | Server behaviour | the Python server's end-to-end suite against the Java server: `SGM_CONTENT=content SGM_JAVA_CP=sgm-manager/build/core-classes python -m unittest discover -s sgm-server/tests` |
 | Game math | `ParityDump` + `sgm-server/tests/parity.py`: XP ladders, stats and fighter scores of every variant/tier/level identical to the Python port (13,310 values) |
-| VPN path | `sudo python tools/tun_shuttle.py <classpath> content ../sgm-server [offline]`: creates a TUN device and drives DNS → TLS login → fight, a 6 MB CDN download, range requests and the connectivity check through the exact packet engine the app uses |
+| VPN path | `sudo python tools/tun_shuttle.py <classpath> content ../sgm-server`: creates a TUN device and drives DNS → TLS login → fight, the maintenance check, index files and an 8 MB streamed bundle from a fake CDN, resume requests, then switches the fake CDN off and checks the saved copies, fast failures and the connectivity check — through the exact packet engine the app uses |
 | Importer | `tools/compare_content.py`: the on-device importer's output is identical to `extract_content.py`'s (16,100 objects, 172 classes) |
 
 Layout:

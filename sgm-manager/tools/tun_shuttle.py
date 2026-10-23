@@ -7,9 +7,16 @@ protocol through the virtual addresses exactly like the phone would:
 DNS query to 10.111.222.2 -> TLS to the returned address -> guest login and a campaign fight.
 
 usage: sudo python3 tools/tun_shuttle.py <java classpath> <content dir> <sgm-server dir>
+
+A fake "official CDN" runs on localhost; the second half of the run switches it off to check that
+saved copies are served and that the start-screen maintenance check never fails (error 867).
 """
 import fcntl
+import hashlib
+import http.client
+import http.server
 import os
+import ssl
 import socket
 import struct
 import subprocess
@@ -53,12 +60,59 @@ def dns_query(name, qtype=1):
     return rcode, (socket.inet_ntoa(r[-4:]) if an else None)
 
 
+class FakeCdn(http.server.BaseHTTPRequestHandler):
+    files = {}
+    hits = []
+
+    def do_GET(self):
+        FakeCdn.hits.append(self.path)
+        body = FakeCdn.files.get(self.path)
+        if body is None:
+            self.send_response(404)
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        # slow upstream: ~3 s for big files, to check that the proxy streams instead of buffering
+        step = max(1, len(body) // 30)
+        for i in range(0, len(body), step):
+            self.wfile.write(body[i:i + step])
+            if len(body) > 1000000:
+                time.sleep(0.1)
+
+    def log_message(self, *a):
+        pass
+
+
+def https_get(ip, path, host, headers=None, timeout=60):
+    ctx = ssl.create_default_context()
+    ctx.check_hostname, ctx.verify_mode = False, ssl.CERT_NONE
+    conn = http.client.HTTPSConnection(ip, 443, context=ctx, timeout=timeout)
+    h = {'Host': host}
+    h.update(headers or {})
+    t0 = time.time()
+    conn.request('GET', path, headers=h)
+    resp = conn.getresponse()
+    first = resp.read(1)
+    ttfb = time.time() - t0
+    body = first + resp.read()
+    return resp.status, body, ttfb, time.time() - t0, resp
+
+
 def main():
     cp, content, server_dir = sys.argv[1:4]
-    mode = sys.argv[4] if len(sys.argv) > 4 else 'online'
     fd = make_tun()
     data = tempfile.mkdtemp()
-    java = subprocess.Popen(['java', '-cp', cp, 'sgm.core.vpn.TunHarness', content, data, mode],
+    cdn_host = 'skgm-prod-cdn.skullgirlsmobile.com'
+    big = os.urandom(8 * 1024 * 1024 + 77)
+    FakeCdn.files = {'/v1/fingerprints.bytes': os.urandom(4000), '/v1/vram.bytes': os.urandom(9000),
+                     '/v1/Android/platform_fingerprints.bytes': os.urandom(3000), '/v1/Android/big.bundle': big,
+                     '/maintenanceMode.json': b'{"enabled": true}'}
+    cdn = http.server.ThreadingHTTPServer(('127.0.0.1', 0), FakeCdn)
+    threading.Thread(target=cdn.serve_forever, daemon=True).start()
+    java = subprocess.Popen(['java', '-cp', cp, 'sgm.core.vpn.TunHarness', content, data, str(cdn.server_address[1])],
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=open(os.path.join(data, 'log'), 'w'))
 
     def tun_to_java():
@@ -85,23 +139,27 @@ def main():
             break
         time.sleep(0.2)
 
-    ok = True
+    results = []
+
+    def check(name, ok, detail=''):
+        results.append(ok)
+        print(('PASS ' if ok else 'FAIL ') + name + (f'  [{detail}]' if detail else ''))
+
     rcode, ip = dns_query(API_HOST)
-    print('DNS A', API_HOST, '->', ip, 'rcode', rcode)
-    ok &= ip == '10.111.222.3'
+    check('DNS: API host -> 10.111.222.3', ip == '10.111.222.3')
     rcode, ip6 = dns_query(API_HOST, 28)
-    print('DNS AAAA', API_HOST, '->', ip6, 'rcode', rcode)
-    ok &= ip6 is None and rcode == 0
-    rcode, other = dns_query('example.com')
-    print('DNS A example.com (forwarded upstream) ->', other, 'rcode', rcode)
+    check('DNS: no IPv6 answer for the API host', ip6 is None and rcode == 0)
+    rcode, cdn_ip = dns_query(cdn_host)
+    check('DNS: CDN host -> 10.111.222.4', cdn_ip == '10.111.222.4')
+    rcode, lh = dns_query('localhost')
+    check('DNS: other names go through the system resolver', lh == '127.0.0.1', f'rcode {rcode}, {lh}')
 
     sys.path.insert(0, os.path.join(server_dir, 'tests'))
     sys.path.insert(0, server_dir)
     from client_sim import GameClient
     c = GameClient('10.111.222.3', 443, tls=True, device_id='tun-device')
     st, d = c.login()
-    print('TLS login through the VPN path:', st, d['data']['user']['handle'])
-    ok &= st == 200
+    check('API: TLS guest login through the VPN path', st == 200)
     st, acts = c.call('GET', 'acts/campaign')
     st2, prog = c.call('PUT', 'acts/progress', {'descriptors': [{'guid': acts['data'][0]}]})
     m = prog['data'][0]['chapters'][0]['matches'][0]
@@ -109,47 +167,43 @@ def main():
     fid = prep['data']['fights'][0]['id']
     c.call('PUT', f'fight/{fid}/start', {'teamIds': d['data']['user']['teamIds']}, signed=True, b64=True)
     st4, end = c.call('PUT', f'fight/{fid}/end', {'stats': []}, query={'status': 'won'}, signed=True, b64=True)
-    print('fight through the VPN path:', st3, st4, len(end['data']['rewards']), 'reward bundles')
-    ok &= st4 == 200
-    # a big response (full collection) to exercise segmentation across many packets
-    st5, coll = c.call('GET', 'user/collection')
-    print('collection', st5, len(str(coll)), 'bytes')
-    if mode == 'offline':
-        # a pre-cached multi-megabyte "asset bundle" served by the CDN cache over TLS
-        import hashlib
-        import http.client
-        import ssl
-        blob = os.urandom(6 * 1024 * 1024 + 123)
-        os.makedirs(os.path.join(data, 'cdn-cache', 'v1', 'Android'), exist_ok=True)
-        with open(os.path.join(data, 'cdn-cache', 'v1', 'Android', 'bundle_test.bundle'), 'wb') as f:
-            f.write(blob)
-        rc, cdn_ip = dns_query('skgm-prod-cdn.skullgirlsmobile.com')
-        ctx = ssl.create_default_context()
-        ctx.check_hostname, ctx.verify_mode = False, ssl.CERT_NONE
-        conn = http.client.HTTPSConnection(cdn_ip, 443, context=ctx, timeout=60)
-        t0 = time.time()
-        conn.request('GET', '/v1/Android/bundle_test.bundle', headers={'Host': 'skgm-prod-cdn.skullgirlsmobile.com'})
-        resp = conn.getresponse()
-        got = resp.read()
-        dt = time.time() - t0
-        print(f'CDN cache via {cdn_ip}: HTTP {resp.status}, {len(got)} bytes in {dt:.2f}s, intact={got == blob}')
-        ok &= got == blob
-        conn.request('GET', '/v1/Android/bundle_test.bundle', headers={'Host': 'skgm-prod-cdn.skullgirlsmobile.com', 'Range': 'bytes=1000-'})
-        resp = conn.getresponse()
-        part = resp.read()
-        print('range request:', resp.status, resp.getheader('Content-Range'), part == blob[1000:])
-        ok &= resp.status == 206 and part == blob[1000:]
-        rc, cip = dns_query('clients3.google.com')
-        s = socket.create_connection((cip, 80), timeout=5)
-        s.sendall(b'GET /generate_204 HTTP/1.1\r\nHost: clients3.google.com\r\nConnection: close\r\n\r\n')
-        line = s.recv(100).split(b'\r\n')[0]
-        print('connectivity check ->', cip, line)
-        ok &= b' 204 ' in line
+    check('API: campaign fight', st3 == 200 and st4 == 200)
+
+    st, body, ttfb, total, _ = https_get(cdn_ip, '/maintenanceMode.json', cdn_host)
+    check('CDN: maintenance check answered locally (HTTP error = no maintenance, never 867)',
+          st == 404 and '/maintenanceMode.json' not in FakeCdn.hits, f'HTTP {st}')
+    for p in ('/v1/vram.bytes', '/v1/fingerprints.bytes', '/v1/Android/platform_fingerprints.bytes'):
+        st, body, ttfb, total, _ = https_get(cdn_ip, p, cdn_host)
+        check(f'CDN: {p} passed through', st == 200 and body == FakeCdn.files[p])
+    st, body, ttfb, total, _ = https_get(cdn_ip, '/v1/Android/big.bundle', cdn_host)
+    check('CDN: 8 MB bundle streamed while downloading (first byte fast, content intact)',
+          st == 200 and body == big and ttfb < 1.5, f'first byte {ttfb:.2f}s, total {total:.2f}s')
+    st, body, ttfb, total, resp = https_get(cdn_ip, '/v1/Android/big.bundle', cdn_host, {'Range': 'bytes=5000-'})
+    check('CDN: resume (Range) from the saved copy', st == 206 and body == big[5000:], resp.getheader('Content-Range'))
+
+    cdn.shutdown()
+    cdn.server_close()
+    print('-- official CDN switched off --')
+    st, body, ttfb, total, _ = https_get(cdn_ip, '/maintenanceMode.json', cdn_host)
+    check('CDN down: maintenance check still answered', st == 404)
+    for p in ('/v1/vram.bytes', '/v1/fingerprints.bytes', '/v1/Android/platform_fingerprints.bytes', '/v1/Android/big.bundle'):
+        st, body, ttfb, total, _ = https_get(cdn_ip, p, cdn_host)
+        check(f'CDN down: {p} served from the saved copy', st == 200 and body == FakeCdn.files[p])
+    st, body, ttfb, total, _ = https_get(cdn_ip, '/v1/Android/never_downloaded.bundle', cdn_host)
+    check('CDN down: unsaved file fails fast with an HTTP error (no 15 s hang)', st == 503 and total < 10, f'{total:.1f}s')
+
+    rc, cip = dns_query('clients3.google.com')
+    s = socket.create_connection((cip, 80), timeout=5)
+    s.sendall(b'GET /generate_204 HTTP/1.1\r\nHost: clients3.google.com\r\nConnection: close\r\n\r\n')
+    line = s.recv(100).split(b'\r\n')[0]
+    check('connectivity check answered locally', b' 204 ' in line, line.decode())
+
     java.stdin.close()
     java.wait(10)
-    print(open(os.path.join(data, 'log')).read()[-1500:])
-    print('RESULT', 'PASS' if ok else 'FAIL')
-    sys.exit(0 if ok else 1)
+    log = open(os.path.join(data, 'log')).read()
+    print('\n'.join(l for l in log.splitlines() if ' I cdn' in l or ' W cdn' in l or 'stats:' in l))
+    print('RESULT', 'PASS' if all(results) else 'FAIL', f'({sum(results)}/{len(results)})')
+    sys.exit(0 if all(results) else 1)
 
 
 if __name__ == '__main__':

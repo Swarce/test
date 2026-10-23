@@ -21,30 +21,34 @@ import java.net.DatagramSocket;
 import java.net.HttpURLConnection;
 import java.net.InetAddress;
 import java.net.URL;
+import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.List;
 
 import sgm.core.Log;
+import sgm.core.Protocol;
 import sgm.core.Server;
 import sgm.core.vpn.CdnCache;
 import sgm.core.vpn.Gateway;
 import sgm.core.vpn.PacketEngine;
+import sgm.core.vpn.ResolvingDnsUpstream;
 import sgm.core.vpn.UdpDnsUpstream;
 
 /**
  * Local VPN that only carries the game's traffic to a few virtual addresses (DNS resolver, game
- * API and, in offline-ready mode, the CDN cache). Everything else the game does keeps using the
- * normal network.
+ * API, CDN stand-in). Everything else the game does keeps using the normal network.
  */
 public final class SgmVpnService extends VpnService {
     static final String ACTION_START = "sgm.manager.START";
     static final String ACTION_STOP = "sgm.manager.STOP";
-    static final String EXTRA_OFFLINE = "offline";
+    /** Keep a copy of every downloaded asset bundle (start-up index files are always kept). */
+    static final String EXTRA_KEEP_DOWNLOADS = "keepDownloads";
 
     static volatile boolean running;
     static volatile String status = "stopped";
     static volatile PacketEngine engine;
     static volatile Gateway gateway;
+    static volatile String cdnStatus = "not checked";
 
     private ParcelFileDescriptor tun;
     private Thread reader;
@@ -66,7 +70,7 @@ public final class SgmVpnService extends VpnService {
             return START_NOT_STICKY;
         }
         if (!running) {
-            final boolean offline = intent != null && intent.getBooleanExtra(EXTRA_OFFLINE, false);
+            final boolean keepDownloads = intent != null && intent.getBooleanExtra(EXTRA_KEEP_DOWNLOADS, true);
             startForeground(1, notification(this, "Starting…"));
             status = "starting…";
             // loading game data and creating the TLS key can take seconds: keep the main thread free
@@ -78,7 +82,7 @@ public final class SgmVpnService extends VpnService {
                             return;
                         }
                         try {
-                            begin(offline);
+                            begin(keepDownloads);
                         } catch (Exception e) {
                             Log.e("could not start", e);
                             status = "error: " + e.getMessage();
@@ -92,7 +96,7 @@ public final class SgmVpnService extends VpnService {
         return START_STICKY;
     }
 
-    private void begin(boolean offline) throws Exception {
+    private void begin(boolean keepDownloads) throws Exception {
         Server server = Engine.get(this).server();
         stopping = false;
         Builder b = new Builder();
@@ -100,7 +104,7 @@ public final class SgmVpnService extends VpnService {
         b.setMtu(1500);
         b.addAddress(Gateway.TUN_ADDR, 24);
         b.addDnsServer(Gateway.DNS_ADDR);
-        Gateway gw = new Gateway(server, Engine.get(this).dataDir, offline, new CdnCache.Opener() {
+        Gateway gw = new Gateway(server, Engine.get(this).dataDir, keepDownloads, new CdnCache.Opener() {
             @Override
             public HttpURLConnection open(URL url) throws IOException {
                 Network n = underlyingNetwork();
@@ -134,12 +138,22 @@ public final class SgmVpnService extends VpnService {
                     out.write(p, off, len);
                 }
             }
+        }, new ResolvingDnsUpstream(new ResolvingDnsUpstream.Resolver() {
+            @Override
+            public InetAddress[] resolve(String host) throws UnknownHostException {
+                // the real network's resolver: follows the phone's DNS settings, never loops into the VPN
+                Network n = underlyingNetwork();
+                if (n == null) {
+                    throw new UnknownHostException("no internet connection");
+                }
+                return n.getAllByName(host);
+            }
         }, new UdpDnsUpstream(upstreamDns(), new UdpDnsUpstream.Protector() {
             @Override
             public boolean protect(DatagramSocket s) {
                 return SgmVpnService.this.protect(s);
             }
-        }));
+        })));
         gateway = gw;
         engine = pe;
         final FileInputStream in = new FileInputStream(tun.getFileDescriptor());
@@ -164,10 +178,39 @@ public final class SgmVpnService extends VpnService {
         }, "sgm-tun");
         reader.start();
         running = true;
-        status = offline ? "running (offline-ready)" : "running";
+        status = "running";
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        nm.notify(1, notification(this, offline ? "Private server active · offline-ready" : "Private server active"));
+        nm.notify(1, notification(this, "Private server active"));
         Log.i("VPN up: only " + Engine.GAME_PACKAGE + " is redirected");
+        probeCdn(gw);
+    }
+
+    /** One look at the official CDN, so the status screen can say whether downloads can work. */
+    private void probeCdn(final Gateway gw) {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                String result;
+                try {
+                    Network n = underlyingNetwork();
+                    if (n == null) {
+                        throw new IOException("no internet connection");
+                    }
+                    HttpURLConnection c = (HttpURLConnection) n.openConnection(new URL("https://" + Protocol.CDN_HOST + "/v1/fingerprints.bytes"));
+                    c.setRequestMethod("HEAD");
+                    c.setConnectTimeout(8000);
+                    c.setReadTimeout(8000);
+                    int code = c.getResponseCode();
+                    c.disconnect();
+                    result = code == 200 ? "reachable" : "answered HTTP " + code;
+                } catch (Exception e) {
+                    result = "unreachable (" + e.getClass().getSimpleName() + ": " + e.getMessage() + ")";
+                }
+                cdnStatus = result;
+                boolean saved = gw.cdn != null && gw.cdn.hasIndexFiles();
+                Log.i("official download server (CDN): " + result + "; saved start-up files: " + (saved ? "yes" : "no"));
+            }
+        }, "sgm-probe").start();
     }
 
     private void shutdown() {

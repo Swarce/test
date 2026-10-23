@@ -60,6 +60,11 @@ public final class HttpServer {
         }
     }
 
+    /** Produces a response body; throwing aborts the connection (the client sees a failed transfer). */
+    public interface BodyWriter {
+        void write(OutputStream out) throws IOException;
+    }
+
     public static final class Response {
         public int status;
         public final Map<String, String> headers = new LinkedHashMap<String, String>();
@@ -67,6 +72,9 @@ public final class HttpServer {
         /** Alternative to body for large payloads (sent from fileOffset to the end). */
         public File file;
         public long fileOffset;
+        /** Alternative to body for streamed payloads; length -1 sends it chunked. Not called for HEAD. */
+        public BodyWriter writer;
+        public long writerLength = -1;
 
         public Response(int status, byte[] body) {
             this.status = status;
@@ -321,7 +329,8 @@ public final class HttpServer {
     }
 
     private static void writeResponse(OutputStream out, Request req, Response r, boolean close) throws IOException {
-        long length = r.file != null ? r.file.length() - r.fileOffset : (r.body == null ? 0 : r.body.length);
+        long length = r.writer != null ? r.writerLength
+                : r.file != null ? r.file.length() - r.fileOffset : (r.body == null ? 0 : r.body.length);
         StringBuilder sb = new StringBuilder();
         sb.append("HTTP/1.1 ").append(r.status).append(' ').append(reason(r.status)).append("\r\n");
         // the client syncs its clock from the Date header (HttpManager / ServerTime)
@@ -330,12 +339,25 @@ public final class HttpServer {
         for (Map.Entry<String, String> e : r.headers.entrySet()) {
             sb.append(e.getKey()).append(": ").append(e.getValue()).append("\r\n");
         }
-        sb.append("Content-Length: ").append(length).append("\r\n");
+        boolean chunked = length < 0;
+        if (chunked) {
+            sb.append("Transfer-Encoding: chunked\r\n");
+        } else {
+            sb.append("Content-Length: ").append(length).append("\r\n");
+        }
         sb.append(close ? "Connection: close\r\n" : "Connection: keep-alive\r\n");
         sb.append("\r\n");
         out.write(sb.toString().getBytes(Protocol.UTF8));
         if (!"HEAD".equals(req.method)) {
-            if (r.file != null) {
+            if (r.writer != null) {
+                if (chunked) {
+                    ChunkedOutput co = new ChunkedOutput(out);
+                    r.writer.write(co);
+                    co.finish();
+                } else {
+                    r.writer.write(out);
+                }
+            } else if (r.file != null) {
                 InputStream fin = new FileInputStream(r.file);
                 try {
                     long skip = r.fileOffset;
@@ -361,6 +383,40 @@ public final class HttpServer {
         out.flush();
     }
 
+    /** HTTP/1.1 chunked transfer coding for bodies of unknown length. */
+    private static final class ChunkedOutput extends OutputStream {
+        private final OutputStream out;
+
+        ChunkedOutput(OutputStream out) {
+            this.out = out;
+        }
+
+        @Override
+        public void write(int b) throws IOException {
+            write(new byte[]{(byte) b}, 0, 1);
+        }
+
+        @Override
+        public void write(byte[] b, int off, int len) throws IOException {
+            if (len > 0) {
+                out.write((Integer.toHexString(len) + "\r\n").getBytes(Protocol.UTF8));
+                out.write(b, off, len);
+                out.write(CRLF);
+            }
+        }
+
+        @Override
+        public void flush() throws IOException {
+            out.flush();
+        }
+
+        void finish() throws IOException {
+            out.write("0\r\n\r\n".getBytes(Protocol.UTF8));
+        }
+    }
+
+    private static final byte[] CRLF = {'\r', '\n'};
+
     private static String reason(int status) {
         switch (status) {
             case 200: return "OK";
@@ -375,6 +431,7 @@ public final class HttpServer {
             case 405: return "Method Not Allowed";
             case 500: return "Internal Server Error";
             case 502: return "Bad Gateway";
+            case 503: return "Service Unavailable";
             default: return "Status";
         }
     }

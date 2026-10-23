@@ -59,6 +59,12 @@ Requires Python 3.10+ (server: standard library only).
    self-signed certificate. Only the API host is redirected — art/audio still download from the
    official CDN, so the first launch needs internet.
 
+   **Error 867 on the title screen** means the game could not reach the CDN for its maintenance
+   check (`maintenanceMode.json`). If the official CDN is unreachable, redirect it to the server
+   too (`--host skgm-prod-cdn.skullgirlsmobile.com`): the server answers that file with an HTTP
+   error, which the game reads as "no maintenance". Asset downloads still need the real CDN or
+   copies saved by the Android manager.
+
 Then start the game and choose guest login. New players skip the tutorial and start with the
 tutorial's final team (Peacock, Big Band, Cerebella), 50,000 coins, 500 theonite and 4 daily-event
 tickets (all configurable).

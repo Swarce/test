@@ -37,9 +37,11 @@ public final class MainActivity extends Activity {
     private TextView status;
     private TextView log;
     private Button startBtn;
-    private CheckBox offline;
+    private CheckBox keepDownloads;
     private final Handler handler = new Handler();
     private volatile String busy;
+    private volatile String savedDownloads = "…";
+    private long sizeCheckedAt;
     private final Runnable tick = new Runnable() {
         @Override
         public void run() {
@@ -82,19 +84,20 @@ public final class MainActivity extends Activity {
             }
         }));
 
-        offline = new CheckBox(this);
-        offline.setText("Offline-ready: cache game downloads and answer connectivity checks, so the game can run without internet once its files are cached");
-        offline.setChecked(Engine.get(this).prefs().getBoolean("offline", false));
-        offline.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+        keepDownloads = new CheckBox(this);
+        keepDownloads.setText("Keep a copy of everything the game downloads, so it can also start without internet "
+                + "(uses storage; the small start-up files are always kept)");
+        keepDownloads.setChecked(Engine.get(this).prefs().getBoolean("keepDownloads", true));
+        keepDownloads.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
             public void onCheckedChanged(CompoundButton b, boolean on) {
-                Engine.get(MainActivity.this).prefs().edit().putBoolean("offline", on).apply();
+                Engine.get(MainActivity.this).prefs().edit().putBoolean("keepDownloads", on).apply();
                 if (SgmVpnService.running) {
                     toast("Stop and start the server to apply");
                 }
             }
         });
-        col.addView(offline);
+        col.addView(keepDownloads);
 
         startBtn = button("Start", new View.OnClickListener() {
             @Override
@@ -122,6 +125,41 @@ public final class MainActivity extends Activity {
                 } else {
                     startActivity(i);
                 }
+            }
+        }));
+
+        col.addView(button("Share log (for bug reports)", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                StringBuilder sb = new StringBuilder();
+                sb.append("SGM Manager log\n").append(status.getText()).append("\n\n");
+                for (String line : Log.recent()) {
+                    sb.append(line).append('\n');
+                }
+                Intent i = new Intent(Intent.ACTION_SEND);
+                i.setType("text/plain");
+                i.putExtra(Intent.EXTRA_TEXT, sb.toString());
+                startActivity(Intent.createChooser(i, "Share log"));
+            }
+        }));
+        col.addView(button("Delete saved downloads", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (SgmVpnService.running) {
+                    toast("Stop the server first");
+                    return;
+                }
+                new AlertDialog.Builder(MainActivity.this)
+                        .setMessage("Delete the saved copies of the game's downloads? Without them the game needs internet to start.")
+                        .setPositiveButton("Delete", new android.content.DialogInterface.OnClickListener() {
+                            @Override
+                            public void onClick(android.content.DialogInterface d, int w) {
+                                GameImporter.deleteTree(new File(Engine.get(MainActivity.this).dataDir, "cdn-cache"));
+                                sizeCheckedAt = 0;
+                                toast("Deleted");
+                            }
+                        })
+                        .setNegativeButton("Cancel", null).show();
             }
         }));
 
@@ -185,7 +223,25 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private void refreshSavedSize() {
+        if (System.currentTimeMillis() - sizeCheckedAt < 10000) {
+            return;
+        }
+        sizeCheckedAt = System.currentTimeMillis();
+        final File dir = new File(Engine.get(this).dataDir, "cdn-cache");
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                long n = sgm.core.vpn.CdnCache.size(dir);
+                boolean index = new File(dir, "v1/fingerprints.bytes").isFile() && new File(dir, "v1/vram.bytes").isFile();
+                savedDownloads = String.format(java.util.Locale.US, "%.1f MB", n / 1048576.0)
+                        + (index ? " (start-up files saved)" : " (start-up files not saved yet: the first start needs internet)");
+            }
+        }, "sgm-size").start();
+    }
+
     private void refresh() {
+        refreshSavedSize();
         Engine e = Engine.get(this);
         StringBuilder sb = new StringBuilder();
         boolean installed = installed();
@@ -196,9 +252,14 @@ public final class MainActivity extends Activity {
         if (pe != null) {
             sb.append(" · ").append(pe.dnsAnswered).append(" lookups redirected, ").append(pe.reflected).append(" packets");
         }
+        if (SgmVpnService.running) {
+            sb.append("\nOfficial download server: ").append(SgmVpnService.cdnStatus);
+        }
+        sb.append("\nSaved downloads: ").append(savedDownloads);
         if (SgmVpnService.gateway != null && SgmVpnService.gateway.cdn != null) {
-            sb.append("\nDownload cache: ").append(SgmVpnService.gateway.cdn.hits).append(" served from cache, ")
-                    .append(SgmVpnService.gateway.cdn.fetched).append(" stored");
+            sgm.core.vpn.CdnCache c = SgmVpnService.gateway.cdn;
+            sb.append(" · ").append(c.fetched).append(" fetched, ").append(c.hits).append(" served from copies, ")
+                    .append(c.misses).append(" unavailable");
         }
         if ("hostname".equals(Compat.privateDnsMode(this))) {
             sb.append("\n\n⚠ Private DNS is set to a specific provider. Set it to Automatic or Off in Settings → "
@@ -251,7 +312,7 @@ public final class MainActivity extends Activity {
     protected void onActivityResult(int req, int result, Intent data) {
         if (req == REQ_VPN && result == RESULT_OK) {
             startService(new Intent(this, SgmVpnService.class).setAction(SgmVpnService.ACTION_START)
-                    .putExtra(SgmVpnService.EXTRA_OFFLINE, offline.isChecked()));
+                    .putExtra(SgmVpnService.EXTRA_KEEP_DOWNLOADS, keepDownloads.isChecked()));
             toast("Server started. Close Skullgirls completely and open it again.");
         } else if (req == REQ_ZIP && result == RESULT_OK && data != null && data.getData() != null) {
             final Uri uri = data.getData();

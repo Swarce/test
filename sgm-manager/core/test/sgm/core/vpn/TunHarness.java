@@ -18,16 +18,20 @@ import sgm.core.Server;
 /**
  * Runs the VPN packet engine against a Linux TUN device that tools/tun_shuttle.py relays over
  * stdin/stdout (2-byte length-prefixed packets), to test DNS + TCP reflection on a real kernel.
- * args: content-dir data-dir [offline]
+ * args: content-dir data-dir [fake-cdn-port]
  */
 public final class TunHarness {
     public static void main(String[] args) throws Exception {
         Server server = Server.open(new File(args[0]), new File(args[1]), null);
-        boolean offline = args.length > 2 && args[2].equals("offline");
-        Gateway gw = new Gateway(server, new File(args[1]), offline, new CdnCache.Opener() {
+        // the "real CDN" is a local fake on this port (tools/tun_shuttle.py), 0 = no internet
+        final int cdnPort = args.length > 2 ? Integer.parseInt(args[2]) : 0;
+        Gateway gw = new Gateway(server, new File(args[1]), true, new CdnCache.Opener() {
             @Override
             public HttpURLConnection open(URL url) throws IOException {
-                return (HttpURLConnection) url.openConnection();
+                if (cdnPort == 0) {
+                    throw new IOException("no internet connection");
+                }
+                return (HttpURLConnection) new URL("http://127.0.0.1:" + cdnPort + url.getFile()).openConnection(java.net.Proxy.NO_PROXY);
             }
         });
         gw.start(Gateway.TUN_ADDR);
@@ -49,7 +53,12 @@ public final class TunHarness {
                     out.flush();
                 }
             }
-        }, new UdpDnsUpstream(resolvers, null));
+        }, new ResolvingDnsUpstream(new ResolvingDnsUpstream.Resolver() {
+            @Override
+            public InetAddress[] resolve(String host) throws java.net.UnknownHostException {
+                return InetAddress.getAllByName(host);
+            }
+        }, new UdpDnsUpstream(resolvers, null)));
         System.err.println("READY");
         DataInputStream in = new DataInputStream(System.in);
         byte[] buf = new byte[65536];

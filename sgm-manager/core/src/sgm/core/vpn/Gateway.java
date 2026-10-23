@@ -14,8 +14,8 @@ import sgm.core.Tls;
 
 /**
  * Listeners behind the VPN's virtual addresses. Addresses live in 10.111.222.0/24:
- * .1 the interface (game side), .2 the DNS resolver, .3 the game API, .4 the CDN cache and
- * connectivity-check responder (offline-ready mode only).
+ * .1 the interface (game side), .2 the DNS resolver, .3 the game API, .4 the CDN stand-in and
+ * the connectivity-check responder.
  */
 public final class Gateway {
     public static final String NET = "10.111.222.";
@@ -24,12 +24,11 @@ public final class Gateway {
     public static final String API_ADDR = NET + "3";
     public static final String CDN_ADDR = NET + "4";
     /** Hosts the game uses to test for internet access (InternetReachabilityVerifier). */
-    public static final String[] CONNECTIVITY_HOSTS = {"clients3.google.com", "connectivitycheck.gstatic.com",
-            "connectivitycheck.android.com", "www.google.com"};
+    public static final String[] CONNECTIVITY_HOSTS = {"clients3.google.com", "connectivitycheck.gstatic.com"};
 
     private final Server server;
     private final File dataDir;
-    private final boolean offlineReady;
+    private final boolean storeAll;
     private final CdnCache.Opener opener;
     private final List<HttpServer> listeners = new ArrayList<HttpServer>();
     public CdnCache cdn;
@@ -37,10 +36,11 @@ public final class Gateway {
     private int cdnPort;
     private int httpPort;
 
-    public Gateway(Server server, File dataDir, boolean offlineReady, CdnCache.Opener opener) {
+    /** storeAll: keep a copy of every downloaded asset bundle (index files are always kept). */
+    public Gateway(Server server, File dataDir, boolean storeAll, CdnCache.Opener opener) {
         this.server = server;
         this.dataDir = dataDir;
-        this.offlineReady = offlineReady;
+        this.storeAll = storeAll;
         this.opener = opener;
     }
 
@@ -50,7 +50,7 @@ public final class Gateway {
         HttpServer api = new HttpServer("api", server, tls);
         apiPort = api.start(bindAddr, 0);
         listeners.add(api);
-        cdn = new CdnCache(new File(dataDir, "cdn-cache"), Protocol.CDN_HOST, opener);
+        cdn = new CdnCache(new File(dataDir, "cdn-cache"), Protocol.CDN_HOST, opener, storeAll);
         final CdnCache cache = cdn;
         final CdnCache.Captive captive = new CdnCache.Captive();
         final Server api2 = server;
@@ -69,11 +69,9 @@ public final class Gateway {
         }, null);
         httpPort = plain.start(bindAddr, 0);
         listeners.add(plain);
-        if (offlineReady) {
-            HttpServer c = new HttpServer("cdn", cdn, tls);
-            cdnPort = c.start(bindAddr, 0);
-            listeners.add(c);
-        }
+        HttpServer c = new HttpServer("cdn", cdn, tls);
+        cdnPort = c.start(bindAddr, 0);
+        listeners.add(c);
     }
 
     public PacketEngine engine(PacketEngine.Output out, PacketEngine.DnsUpstream upstream) {
@@ -83,16 +81,14 @@ public final class Gateway {
         e.mapHost(Protocol.API_HOST, api);
         e.mapPort(api, 443, apiPort);
         e.mapPort(api, 80, httpPort);
-        if (offlineReady) {
-            e.mapHost(Protocol.CDN_HOST, cdnIp);
-            for (String h : CONNECTIVITY_HOSTS) {
-                e.mapHost(h, cdnIp);
-            }
-            e.mapPort(cdnIp, 443, cdnPort);
-            e.mapPort(cdnIp, 80, httpPort);
+        e.mapHost(Protocol.CDN_HOST, cdnIp);
+        for (String h : CONNECTIVITY_HOSTS) {
+            e.mapHost(h, cdnIp);
         }
-        Log.i("gateway: api " + Protocol.API_HOST + " -> " + API_ADDR + " (local port " + apiPort + ")"
-                + (offlineReady ? ", cdn/connectivity -> " + CDN_ADDR + " (ports " + cdnPort + "/" + httpPort + ")" : ""));
+        e.mapPort(cdnIp, 443, cdnPort);
+        e.mapPort(cdnIp, 80, httpPort);
+        Log.i("gateway: api -> " + API_ADDR + " (port " + apiPort + "), cdn + connectivity check -> " + CDN_ADDR
+                + " (ports " + cdnPort + "/" + httpPort + ")" + (storeAll ? ", keeping copies of all downloads" : ""));
         return e;
     }
 
@@ -101,9 +97,7 @@ public final class Gateway {
         List<String> r = new ArrayList<String>();
         r.add(DNS_ADDR);
         r.add(API_ADDR);
-        if (offlineReady) {
-            r.add(CDN_ADDR);
-        }
+        r.add(CDN_ADDR);
         return r;
     }
 
