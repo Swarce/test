@@ -1,0 +1,502 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SGM Account Editor</title>
+<style>
+:root{--bg:#14121a;--panel:#1f1b29;--panel2:#2a2438;--text:#ece8f4;--muted:#a59fb6;--accent:#e0457b;--accent2:#7c5cff;--ok:#3fb37f;--warn:#e0a03f;--line:#3a3350}
+@media (prefers-color-scheme: light){:root:not([data-theme="dark"]){--bg:#f4f2f8;--panel:#fff;--panel2:#efeaf7;--text:#1d1828;--muted:#6b6380;--line:#dcd5ea}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{position:sticky;top:0;z-index:5;background:var(--panel);border-bottom:1px solid var(--line);padding:10px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+header h1{font-size:17px;margin:0;flex:1;min-width:140px}
+header select{max-width:60vw}
+nav{display:flex;gap:4px;overflow-x:auto;padding:8px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+nav button{white-space:nowrap}
+nav button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+main{padding:16px;max-width:1100px;margin:0 auto}
+section{display:none}section.on{display:block}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px}
+.card h2{font-size:15px;margin:0 0 10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+button,input,select,textarea{font:inherit;color:var(--text);background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:7px 10px}
+button{cursor:pointer}button:hover{border-color:var(--accent2)}
+button.primary{background:var(--accent2);border-color:var(--accent2);color:#fff}
+button.danger{color:#ff7b8f}
+input[type=number]{width:120px}
+input[type=checkbox]{width:auto}
+textarea{width:100%;min-height:340px;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px}
+.grid label{display:flex;justify-content:space-between;align-items:center;gap:8px;background:var(--panel2);padding:6px 8px;border-radius:7px}
+.grid label span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);font-size:14px;vertical-align:middle}
+td:first-child{min-width:150px}
+th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase}
+.muted{color:var(--muted);font-size:13px}
+.pill{display:inline-block;padding:1px 7px;border-radius:9px;font-size:12px;background:var(--panel2);border:1px solid var(--line)}
+.t0{color:#c98a5a}.t1{color:#b9c1cc}.t2{color:#e6c34a}.t3{color:#7fd7ff}
+.scroll{overflow-x:auto}
+#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--panel2);border:1px solid var(--line);padding:10px 16px;border-radius:9px;display:none;z-index:20;max-width:90vw}
+dialog{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:12px;max-width:min(560px,94vw);width:100%}
+dialog::backdrop{background:rgba(0,0,0,.55)}
+.picker{max-height:300px;overflow:auto;border:1px solid var(--line);border-radius:7px;margin-top:6px}
+.picker div{padding:6px 9px;cursor:pointer;border-bottom:1px solid var(--line);font-size:14px}
+.picker div:hover,.picker div.sel{background:var(--accent2);color:#fff}
+pre{white-space:pre-wrap;font-size:12px;max-height:420px;overflow:auto;background:var(--panel2);padding:10px;border-radius:7px}
+</style>
+</head>
+<body>
+<header>
+  <h1>SGM Account Editor</h1>
+  <select id="userSel" aria-label="Account"></select>
+  <button id="reload" title="Reload from server">↻</button>
+</header>
+<nav id="tabs"></nav>
+<main>
+<section id="tab-accounts">
+  <div class="card"><h2>Accounts</h2>
+    <p class="muted">The game logs into the <b>active</b> account. After editing, close and reopen the game (or return to the title screen) so it reloads your profile.</p>
+    <div class="scroll"><table id="usersTbl"></table></div>
+    <div class="row"><input id="newHandle" placeholder="Name for a new account"><button class="primary" id="createUser">Create account</button></div>
+  </div>
+  <div class="card"><h2>Backup</h2>
+    <div class="row"><button id="exportUser">Export selected save</button>
+      <label class="row"><input type="file" id="importFile" accept=".json,application/json"></label>
+      <select id="importMode"><option value="new">import as new account</option><option value="replace">replace selected account</option></select>
+      <button id="importBtn">Import</button></div>
+  </div>
+</section>
+
+<section id="tab-profile">
+  <div class="card"><h2>Profile</h2>
+    <div class="row"><label>Name <input id="handle" maxlength="20"></label><button id="saveHandle">Save</button></div>
+    <div class="row"><label>Player level <input type="number" id="plevel" min="1"></label><button id="savePlevel">Set</button><span class="muted" id="pxp"></span></div>
+  </div>
+  <div class="card"><h2>Currencies</h2>
+    <div class="grid" id="currencies"></div>
+    <div class="row"><button class="primary" id="saveCurrencies">Save currencies</button><button id="maxCurrencies">Fill common currencies</button></div>
+  </div>
+  <div class="card"><h2>Progress</h2>
+    <div class="row">
+      <button data-op="complete_tutorials">Complete all tutorials</button>
+      <button data-op="refill_energy">Refill all energy</button>
+      <button data-op="reset_daily">Reset daily challenges &amp; tickets</button>
+      <button data-op="reset_events">Reset event runs</button>
+    </div>
+  </div>
+</section>
+
+<section id="tab-fighters">
+  <div class="card"><h2>Add fighters</h2>
+    <div class="row"><input id="varSearch" placeholder="Search fighter or variant…" style="flex:1;min-width:200px">
+      <label><input type="checkbox" id="varAll"> show non-collectible</label></div>
+    <div class="picker" id="varPicker"></div>
+    <div class="row">
+      <label>Tier <select id="addTier"><option value="">variant default</option><option value="0">Bronze</option><option value="1">Silver</option><option value="2">Gold</option><option value="3">Diamond</option></select></label>
+      <label>Level <input type="number" id="addLevel" min="1" max="60" value="1"></label>
+      <label><input type="checkbox" id="addMaxLvl"> max level</label>
+      <label><input type="checkbox" id="addShiny"> shiny</label>
+      <label><input type="checkbox" id="addNodes"> all skill nodes</label>
+      <label>Copies <input type="number" id="addCount" min="1" max="100" value="1" style="width:70px"></label>
+      <button class="primary" id="addFighter">Add</button>
+    </div>
+    <div class="row">
+      <button id="unlockAll">Add one of every fighter I don't own</button>
+      <button id="maxAll">Max level + skills for all owned</button>
+    </div>
+  </div>
+  <div class="card"><h2>Owned fighters <span class="muted" id="fCount"></span></h2>
+    <div class="row"><input id="ownSearch" placeholder="Filter…"></div>
+    <div class="scroll"><table id="fightersTbl"></table></div>
+  </div>
+</section>
+
+<section id="tab-moves">
+  <div class="card"><h2>Add moves</h2>
+    <div class="row"><input id="mvSearch" placeholder="Search move, blockbuster or assist…" style="flex:1;min-width:200px">
+      <select id="mvKind"><option value="">all kinds</option><option value="special">special moves</option><option value="blockbuster">blockbusters</option><option value="assist">assists</option></select></div>
+    <div class="picker" id="mvPicker"></div>
+    <div class="row"><label>Level <input type="number" id="mvEvo" min="1" max="15" value="15"></label>
+      <label>Copies <input type="number" id="mvCount" min="1" max="100" value="1" style="width:70px"></label>
+      <button class="primary" id="addMove">Add</button></div>
+  </div>
+  <div class="card"><h2>Owned moves <span class="muted" id="mCount"></span></h2>
+    <div class="row"><input id="ownMvSearch" placeholder="Filter…"></div>
+    <div class="scroll"><table id="movesTbl"></table></div>
+  </div>
+</section>
+
+<section id="tab-items">
+  <div class="card"><h2>Consumables</h2><div class="grid" id="consumables"></div>
+    <div class="row"><button class="primary" id="saveConsumables">Save consumables</button></div></div>
+  <div class="card"><h2>Relics</h2>
+    <div class="row"><input id="relicSearch" placeholder="Search relics…" style="flex:1"><label><input type="checkbox" id="relicStoreOnly" checked> store relics only</label></div>
+    <div class="picker" id="relicPicker"></div>
+    <div class="row"><label>Count <input type="number" id="relicCount" min="0" value="10"></label><button class="primary" id="setRelic">Set count</button></div>
+    <div id="ownedRelics"></div></div>
+  <div class="card"><h2>Skill points &amp; reroll runes (per character)</h2>
+    <div class="scroll"><table id="spTbl"></table></div>
+    <div class="row"><button class="primary" id="saveSp">Save</button><label>Set all skill points to <input type="number" id="spAll" value="100000"></label><button id="spAllBtn">Apply</button></div></div>
+  <div class="card"><h2>Catalysts</h2>
+    <div class="row"><select id="catSel" style="max-width:100%"></select><select id="catEl"></select><button id="addCat">Add</button></div>
+    <div id="ownedCats"></div></div>
+</section>
+
+<section id="tab-campaign">
+  <div class="card"><h2>Story campaign</h2>
+    <p class="muted">Completing marks every match (and its challenges) done without paying out rewards. Resetting lets you replay acts for their first-clear rewards.</p>
+    <div class="row"><button class="primary" id="campAll">Complete all acts</button><button class="danger" id="campReset">Reset all acts</button></div>
+    <div class="scroll"><table id="actsTbl"></table></div></div>
+</section>
+
+<section id="tab-server">
+  <div class="card"><h2>Server settings</h2>
+    <div id="cfgForm"></div>
+    <div class="row"><button class="primary" id="saveCfg">Save settings</button></div>
+    <p class="muted">Rates apply to fights finished from now on. "starting_currencies" only affects new accounts.</p></div>
+  <div class="card"><h2>Status</h2><pre id="statusBox"></pre></div>
+  <div class="card"><h2>Log</h2><div class="row"><button id="refreshLog">Refresh</button></div><pre id="logBox"></pre></div>
+</section>
+
+<section id="tab-raw">
+  <div class="card"><h2>Raw save (advanced)</h2>
+    <p class="muted">Full save document of the selected account. Invalid fighters are rejected; id and login bindings are kept.</p>
+    <textarea id="rawBox" spellcheck="false"></textarea>
+    <div class="row"><button class="primary" id="saveRaw">Save raw JSON</button></div></div>
+</section>
+</main>
+
+<dialog id="charDlg"><form method="dialog" id="charForm">
+  <h3 id="cdTitle" style="margin-top:0"></h3>
+  <div class="row"><label>Tier <select id="cdTier"><option value="0">Bronze</option><option value="1">Silver</option><option value="2">Gold</option><option value="3">Diamond</option></select></label>
+    <label>Level <input type="number" id="cdLevel" min="1" max="60"></label></div>
+  <div class="row"><label><input type="checkbox" id="cdShiny"> shiny</label><label><input type="checkbox" id="cdLocked"> locked</label></div>
+  <div class="row"><label>Super ability levels <input id="cdSuper" placeholder="e.g. 10,10"></label><label>Active super <input type="number" id="cdSuperF" min="0" style="width:70px"></label></div>
+  <div class="row"><label>Prestige <input type="number" id="cdPrestige" min="0" max="100"></label></div>
+  <div class="row"><label>Skill tree <select id="cdNodes"><option value="">keep</option><option value="all">all nodes</option><option value="none">reset</option></select></label></div>
+  <div class="row"><button class="primary" value="save" id="cdSave">Save</button><button value="cancel">Cancel</button><button class="danger" value="remove" id="cdRemove">Remove fighter</button></div>
+</form></dialog>
+<div id="toast"></div>
+
+<script>
+'use strict';
+var S = {cat: null, users: [], uid: null, view: null, cfg: null};
+var RAR = ['Bronze', 'Silver', 'Gold', 'Diamond'];
+var TABS = [['accounts', 'Accounts'], ['profile', 'Profile & currency'], ['fighters', 'Fighters'], ['moves', 'Moves'],
+  ['items', 'Items'], ['campaign', 'Campaign'], ['server', 'Server'], ['raw', 'Raw save']];
+function $(id) { return document.getElementById(id); }
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; }); }
+function toast(msg, bad) { var t = $('toast'); t.textContent = msg; t.style.display = 'block'; t.style.borderColor = bad ? '#e0457b' : ''; clearTimeout(toast.h); toast.h = setTimeout(function () { t.style.display = 'none'; }, 3200); }
+function api(method, path, body) {
+  return fetch('/admin/api/' + path, {method: method, credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+    body: body === undefined ? undefined : JSON.stringify(body)}).then(function (r) {
+    return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j; });
+  });
+}
+function fail(e) { toast(e.message || String(e), true); }
+function ops(list, msg) {
+  if (!S.uid) return Promise.reject(new Error('no account selected'));
+  return api('POST', 'users/' + S.uid + '/ops', {ops: list}).then(function (v) { S.view = v; render(); if (msg) toast(msg); return v; }).catch(fail);
+}
+var byGuid = {};
+function name(g) { var x = byGuid[g]; return x ? x.name : g; }
+function fighterName(v) { var x = byGuid[v]; return x ? x.character + ' — ' + x.name : v; }
+
+// ---- tabs ----
+TABS.forEach(function (t, i) {
+  var b = document.createElement('button'); b.textContent = t[1]; b.dataset.tab = t[0];
+  b.onclick = function () { show(t[0]); }; $('tabs').appendChild(b);
+});
+function show(tab) {
+  Array.prototype.forEach.call(document.querySelectorAll('nav button'), function (b) { b.classList.toggle('on', b.dataset.tab === tab); });
+  Array.prototype.forEach.call(document.querySelectorAll('section'), function (s) { s.classList.toggle('on', s.id === 'tab-' + tab); });
+  try { localStorage.setItem('sgmTab', tab); } catch (e) {}
+  if (tab === 'server') loadServer();
+}
+
+// ---- loading ----
+function loadUsers(select) {
+  return api('GET', 'users').then(function (r) {
+    S.users = r.users;
+    var sel = $('userSel'); sel.innerHTML = '';
+    r.users.forEach(function (u) { var o = document.createElement('option'); o.value = u.id; o.textContent = u.handle + ' (Lv ' + u.level + ')' + (u.active ? ' ★' : ''); sel.appendChild(o); });
+    var want = select || S.uid || (r.users.filter(function (u) { return u.active; })[0] || r.users[0] || {}).id;
+    if (want) { sel.value = want; return loadUser(want); }
+    S.uid = null; S.view = null; render();
+  });
+}
+function loadUser(id) { S.uid = id; return api('GET', 'users/' + id).then(function (v) { S.view = v; render(); }); }
+function init() {
+  api('GET', 'catalog').then(function (c) {
+    S.cat = c;
+    c.variants.concat(c.moves, c.consumables, c.relics, c.catalysts, c.bases).forEach(function (x) { byGuid[x.guid] = x; });
+    $('catEl').innerHTML = c.elements.map(function (e) { return '<option>' + esc(e) + '</option>'; }).join('');
+    $('catSel').innerHTML = c.catalysts.map(function (x) { return '<option value="' + esc(x.guid) + '">' + esc(x.name) + '</option>'; }).join('');
+    renderVarPicker(); renderMvPicker(); renderRelicPicker();
+    return loadUsers();
+  }).catch(fail);
+  var t = 'accounts'; try { t = localStorage.getItem('sgmTab') || t; } catch (e) {}
+  show(t);
+}
+$('userSel').onchange = function () { loadUser(this.value).catch(fail); };
+$('reload').onclick = function () { loadUsers().then(function () { toast('Reloaded'); }).catch(fail); };
+
+// ---- render ----
+function render() {
+  renderUsers();
+  var v = S.view; if (!v) return;
+  var u = v.save, d = v.derived;
+  $('handle').value = u.handle;
+  $('plevel').value = d.level; $('plevel').max = S.cat.playerLevelCap;
+  $('pxp').textContent = 'XP ' + u.xp + ' · top team power ' + d.topTeamPower;
+  var cur = $('currencies'); cur.innerHTML = '';
+  S.cat.currencies.forEach(function (c) {
+    cur.insertAdjacentHTML('beforeend', '<label><span title="' + esc(c) + '">' + esc(c.replace(/([a-z])([A-Z])/g, '$1 $2')) + '</span><input type="number" min="0" data-cur="' + esc(c) + '" value="' + ((u.currencies || {})[c] || 0) + '"></label>');
+  });
+  renderFighters(); renderMoves(); renderItems(); renderActs();
+  $('rawBox').value = JSON.stringify(u, null, 1);
+}
+function renderUsers() {
+  var rows = '<tr><th>Name</th><th>Level</th><th>Fighters</th><th></th></tr>';
+  S.users.forEach(function (u) {
+    rows += '<tr><td>' + esc(u.handle) + (u.active ? ' <span class="pill">active</span>' : '') + '<div class="muted">' + esc(u.id) + '</div></td><td>' + u.level + '</td><td>' + u.characters + '</td><td>' +
+      (u.active ? '' : '<button data-act="' + esc(u.id) + '">Make active</button> ') + '<button class="danger" data-del="' + esc(u.id) + '">Delete</button></td></tr>';
+  });
+  $('usersTbl').innerHTML = rows;
+}
+$('usersTbl').onclick = function (e) {
+  var a = e.target.dataset.act, d = e.target.dataset.del;
+  if (a) api('POST', 'users/' + a + '/activate').then(function () { toast('The game will log into this account next time'); return loadUsers(a); }).catch(fail);
+  if (d && confirm('Delete this account permanently?')) api('DELETE', 'users/' + d).then(function () { S.uid = null; return loadUsers(); }).catch(fail);
+};
+$('createUser').onclick = function () { api('POST', 'users', {handle: $('newHandle').value || null}).then(function (v) { toast('Created'); return loadUsers(v.save.id); }).catch(fail); };
+$('exportUser').onclick = function () { if (S.uid) location.href = '/admin/api/users/' + S.uid + '/export'; };
+$('importBtn').onclick = function () {
+  var f = $('importFile').files[0]; if (!f) return toast('Choose a save file first', true);
+  new Promise(function (ok, no) { var r = new FileReader(); r.onload = function () { ok(r.result); }; r.onerror = no; r.readAsText(f); }).then(function (t) {
+    var doc = JSON.parse(t);
+    if ($('importMode').value === 'replace') {
+      if (!confirm('Replace the selected account with this save?')) return;
+      return api('PUT', 'users/' + S.uid, doc).then(function () { toast('Imported'); return loadUsers(S.uid); });
+    }
+    return api('POST', 'users', {'import': doc}).then(function (v) { toast('Imported as a new account'); return loadUsers(v.save.id); });
+  }).catch(fail);
+};
+
+// ---- profile ----
+$('saveHandle').onclick = function () { ops([{op: 'set_handle', handle: $('handle').value}], 'Saved').then(function () { loadUsers(S.uid); }); };
+$('savePlevel').onclick = function () { ops([{op: 'set_player_level', level: +$('plevel').value}], 'Player level set'); };
+$('saveCurrencies').onclick = function () {
+  var l = []; Array.prototype.forEach.call(document.querySelectorAll('[data-cur]'), function (i) { l.push({op: 'set_currency', name: i.dataset.cur, amount: +i.value || 0}); });
+  ops(l, 'Currencies saved');
+};
+$('maxCurrencies').onclick = function () {
+  var fill = {SoftCurrency: 99999999, HardCurrency: 999999, DailyEventTicket: 99, EnergyRefill: 999, BronzeKey: 999, SilverKey: 999, GoldKey: 999, DiamondKey: 999,
+    SilverGachaShard: 99999, GoldGachaShard: 99999, DiamondGachaShard: 99999, CharacterGachaShard: 99999, UniversalRerollRune: 9999, AssistEvoCurrency: 99999};
+  ['Fire', 'Water', 'Air', 'Light', 'Dark'].forEach(function (e) { fill[e + 'Essence'] = 99999; fill[e + 'EssenceShard'] = 99999; });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-cur]'), function (i) { if (fill[i.dataset.cur] != null) i.value = fill[i.dataset.cur]; });
+  toast('Filled — press "Save currencies"');
+};
+Array.prototype.forEach.call(document.querySelectorAll('[data-op]'), function (b) { b.onclick = function () { ops([{op: b.dataset.op}], 'Done'); }; });
+
+// ---- fighters ----
+var selVar = null;
+function renderVarPicker() {
+  var q = $('varSearch').value.toLowerCase(), all = $('varAll').checked, out = [];
+  S.cat.variants.forEach(function (v) {
+    if (!all && !v.collectible) return;
+    var label = v.character + ' — ' + v.name;
+    if (q && (label + ' ' + v.internal).toLowerCase().indexOf(q) < 0) return;
+    out.push('<div data-g="' + esc(v.guid) + '"' + (v.guid === selVar ? ' class="sel"' : '') + '><span class="t' + v.tier + '">●</span> ' + esc(label) + ' <span class="muted">' + RAR[v.tier] + ' · ' + esc(S.cat.elements[v.element] || '') + '</span></div>');
+  });
+  $('varPicker').innerHTML = out.slice(0, 400).join('') || '<div class="muted">No match</div>';
+}
+$('varSearch').oninput = renderVarPicker; $('varAll').onchange = renderVarPicker;
+$('varPicker').onclick = function (e) { var d = e.target.closest('[data-g]'); if (!d) return; selVar = d.dataset.g; renderVarPicker(); };
+$('addFighter').onclick = function () {
+  if (!selVar) return toast('Pick a fighter first', true);
+  var op = {op: 'add_character', variant: selVar, shiny: $('addShiny').checked, maxNodes: $('addNodes').checked, count: +$('addCount').value || 1};
+  if ($('addTier').value !== '') op.tier = +$('addTier').value;
+  op.level = $('addMaxLvl').checked ? 'max' : (+$('addLevel').value || 1);
+  ops([op], 'Added ' + name(selVar));
+};
+$('unlockAll').onclick = function () {
+  if (!confirm('Add one copy of every collectible fighter you do not own yet?')) return;
+  ops([{op: 'unlock_all_characters', level: $('addMaxLvl').checked ? 'max' : null, maxNodes: $('addNodes').checked}]).then(function (v) { if (v) toast('Added ' + v.results[0].added.length + ' fighters'); });
+};
+$('maxAll').onclick = function () { if (confirm('Set every owned fighter to its max level and buy all skill nodes?')) ops([{op: 'max_all_characters'}], 'All fighters maxed'); };
+$('ownSearch').oninput = renderFighters;
+function renderFighters() {
+  var u = S.view.save, d = S.view.derived, q = $('ownSearch').value.toLowerCase(), team = u.team || [];
+  var ids = Object.keys(u.characters || {});
+  $('fCount').textContent = '(' + ids.length + ')';
+  ids.sort(function (a, b) { return (d.characters[b] || {}).fighterScore - (d.characters[a] || {}).fighterScore; });
+  var rows = '<tr><th>Fighter</th><th>Tier</th><th>Level</th><th>FS</th><th>Team</th><th></th></tr>';
+  ids.forEach(function (id) {
+    var c = u.characters[id], x = d.characters[id] || {}, nm = fighterName(c.variant);
+    if (q && nm.toLowerCase().indexOf(q) < 0) return;
+    rows += '<tr><td>' + esc(nm) + (c.shiny ? ' ✦' : '') + (c.locked ? ' 🔒' : '') + '</td><td class="t' + c.tier + '">' + RAR[c.tier] + '</td><td>' + x.level + '/' + x.levelCap +
+      '</td><td>' + x.fighterScore + '</td><td><input type="checkbox" data-team="' + esc(id) + '"' + (team.indexOf(id) >= 0 ? ' checked' : '') + '></td><td><button data-edit="' + esc(id) + '">Edit</button></td></tr>';
+  });
+  $('fightersTbl').innerHTML = rows;
+}
+$('fightersTbl').onclick = function (e) {
+  if (e.target.dataset.team) {
+    var team = (S.view.save.team || []).slice(), id = e.target.dataset.team, i = team.indexOf(id);
+    if (e.target.checked) { if (team.length >= 3) { e.target.checked = false; return toast('A team has 3 fighters', true); } team.push(id); } else if (i >= 0) team.splice(i, 1);
+    return ops([{op: 'set_team', ids: team}], 'Team updated');
+  }
+  var id2 = e.target.dataset.edit; if (!id2) return;
+  var c = S.view.save.characters[id2], x = S.view.derived.characters[id2];
+  $('cdTitle').textContent = fighterName(c.variant);
+  $('cdTier').value = c.tier; $('cdLevel').value = x.level; $('cdShiny').checked = !!c.shiny; $('cdLocked').checked = !!c.locked;
+  $('cdSuper').value = (c.superLevels || []).join(','); $('cdSuperF').value = c.superFeature || 0; $('cdPrestige').value = c.prestige || 0; $('cdNodes').value = '';
+  $('charDlg').dataset.id = id2; $('charDlg').showModal();
+};
+$('charDlg').addEventListener('close', function () {
+  var id = this.dataset.id, rv = this.returnValue;
+  if (rv === 'remove') { if (confirm('Remove this fighter?')) ops([{op: 'remove_character', id: id}], 'Removed'); return; }
+  if (rv !== 'save') return;
+  var sup = $('cdSuper').value.split(',').map(function (s) { return s.trim(); }).filter(Boolean).map(Number);
+  var op = {op: 'edit_character', id: id, tier: +$('cdTier').value, level: +$('cdLevel').value, shiny: $('cdShiny').checked, locked: $('cdLocked').checked,
+    superLevels: sup, superFeature: +$('cdSuperF').value || 0, prestige: +$('cdPrestige').value || 0, refillEnergy: true};
+  if ($('cdNodes').value) op.nodes = $('cdNodes').value;
+  ops([op], 'Fighter saved');
+});
+
+// ---- moves ----
+var selMv = null;
+function renderMvPicker() {
+  var q = $('mvSearch').value.toLowerCase(), k = $('mvKind').value, out = [];
+  S.cat.moves.forEach(function (m) {
+    if (k && m.kind !== k) return;
+    var base = m.base && byGuid[m.base] ? byGuid[m.base].name : (m.base || '').replace('assist:', '');
+    var label = (base ? base + ': ' : '') + m.name;
+    if (q && (label + ' ' + m.internal).toLowerCase().indexOf(q) < 0) return;
+    out.push('<div data-g="' + esc(m.guid) + '"' + (m.guid === selMv ? ' class="sel"' : '') + '><span class="t' + m.tier + '">●</span> ' + esc(label) + ' <span class="muted">' + m.kind + ' · ' + RAR[m.tier] + '</span></div>');
+  });
+  $('mvPicker').innerHTML = out.slice(0, 400).join('') || '<div class="muted">No match</div>';
+}
+$('mvSearch').oninput = renderMvPicker; $('mvKind').onchange = renderMvPicker;
+$('mvPicker').onclick = function (e) { var d = e.target.closest('[data-g]'); if (!d) return; selMv = d.dataset.g; renderMvPicker(); };
+$('addMove').onclick = function () {
+  if (!selMv) return toast('Pick a move first', true);
+  ops([{op: 'add_move', guid: selMv, evolution: +$('mvEvo').value || 1, count: +$('mvCount').value || 1}], 'Added ' + name(selMv));
+};
+$('ownMvSearch').oninput = renderMoves;
+function renderMoves() {
+  var u = S.view.save, q = $('ownMvSearch').value.toLowerCase(), rows = '<tr><th>Move</th><th>Kind</th><th>Level</th><th></th></tr>', n = 0;
+  [['moves', 'move'], ['assistMoves', 'assist']].forEach(function (p) {
+    Object.keys(u[p[0]] || {}).forEach(function (id) {
+      var m = u[p[0]][id], c = byGuid[m.guid] || {}, nm = c.name || m.guid; n++;
+      if (q && nm.toLowerCase().indexOf(q) < 0) return;
+      rows += '<tr><td><span class="t' + (c.tier || 0) + '">●</span> ' + esc(nm) + '</td><td>' + esc(c.kind || p[1]) + '</td><td><input type="number" min="1" max="15" value="' + m.evolution + '" data-evo="' + esc(id) + '" style="width:70px"></td><td><button class="danger" data-rm="' + esc(id) + '">Remove</button></td></tr>';
+    });
+  });
+  $('mCount').textContent = '(' + n + ')';
+  $('movesTbl').innerHTML = rows;
+}
+$('movesTbl').onchange = function (e) { var id = e.target.dataset.evo; if (id) ops([{op: 'edit_move', id: id, evolution: +e.target.value}], 'Move level saved'); };
+$('movesTbl').onclick = function (e) { var id = e.target.dataset.rm; if (id) ops([{op: 'remove_move', id: id}], 'Removed'); };
+
+// ---- items ----
+var selRelic = null;
+function renderRelicPicker() {
+  var q = $('relicSearch').value.toLowerCase(), only = $('relicStoreOnly').checked;
+  $('relicPicker').innerHTML = S.cat.relics.filter(function (r) { return (!only || r.inStore) && (!q || r.name.toLowerCase().indexOf(q) >= 0); })
+    .map(function (r) { return '<div data-g="' + esc(r.guid) + '"' + (r.guid === selRelic ? ' class="sel"' : '') + '>' + esc(r.name) + '</div>'; }).join('') || '<div class="muted">No match</div>';
+}
+$('relicSearch').oninput = renderRelicPicker; $('relicStoreOnly').onchange = renderRelicPicker;
+$('relicPicker').onclick = function (e) { var d = e.target.closest('[data-g]'); if (!d) return; selRelic = d.dataset.g; renderRelicPicker(); };
+$('setRelic').onclick = function () { if (!selRelic) return toast('Pick a relic first', true); ops([{op: 'set_relic', guid: selRelic, count: +$('relicCount').value || 0}], 'Relics updated'); };
+function renderItems() {
+  var u = S.view.save;
+  $('consumables').innerHTML = S.cat.consumables.map(function (c) {
+    return '<label><span>' + esc(c.name) + '</span><input type="number" min="0" data-cons="' + esc(c.guid) + '" value="' + ((u.consumables || {})[c.guid] || 0) + '"></label>';
+  }).join('');
+  var owned = Object.keys(u.gachas || {}).filter(function (g) { return u.gachas[g] > 0; });
+  $('ownedRelics').innerHTML = owned.length ? '<p class="muted">Owned (open them from the game\'s relic inventory):</p>' + owned.map(function (g) {
+    return '<div class="row"><span>' + esc(name(g)) + ' × ' + u.gachas[g] + '</span><button data-relic0="' + esc(g) + '">Remove</button></div>';
+  }).join('') : '';
+  var rows = '<tr><th>Character</th><th>Skill points</th><th>Reroll runes</th></tr>';
+  S.cat.bases.slice().sort(function (a, b) { return a.name.localeCompare(b.name); }).forEach(function (b) {
+    rows += '<tr><td>' + esc(b.name) + '</td><td><input type="number" min="0" data-sp="' + esc(b.guid) + '" value="' + ((u.skillPoints || {})[b.guid] || 0) + '"></td><td><input type="number" min="0" data-rr="' + esc(b.guid) + '" value="' + ((u.rerollRunes || {})[b.guid] || 0) + '"></td></tr>';
+  });
+  $('spTbl').innerHTML = rows;
+  var cats = u.nodeModifiers || {};
+  $('ownedCats').innerHTML = Object.keys(cats).map(function (id) {
+    return '<div class="row"><span>' + esc(name(cats[id].guid)) + ' · ' + esc(cats[id].element) + '</span><button data-cat0="' + esc(id) + '">Remove</button></div>';
+  }).join('');
+}
+$('ownedRelics').onclick = function (e) { var g = e.target.dataset.relic0; if (g) ops([{op: 'set_relic', guid: g, count: 0}], 'Removed'); };
+$('ownedCats').onclick = function (e) { var g = e.target.dataset.cat0; if (g) ops([{op: 'remove_node_modifier', id: g}], 'Removed'); };
+$('saveConsumables').onclick = function () {
+  ops(Array.prototype.map.call(document.querySelectorAll('[data-cons]'), function (i) { return {op: 'set_consumable', guid: i.dataset.cons, count: +i.value || 0}; }), 'Consumables saved');
+};
+$('saveSp').onclick = function () {
+  var l = [];
+  Array.prototype.forEach.call(document.querySelectorAll('[data-sp]'), function (i) { l.push({op: 'set_skill_points', base: i.dataset.sp, amount: +i.value || 0}); });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-rr]'), function (i) { l.push({op: 'set_reroll_runes', base: i.dataset.rr, amount: +i.value || 0}); });
+  ops(l, 'Saved');
+};
+$('spAllBtn').onclick = function () { Array.prototype.forEach.call(document.querySelectorAll('[data-sp]'), function (i) { i.value = $('spAll').value; }); $('saveSp').onclick(); };
+$('addCat').onclick = function () { ops([{op: 'add_node_modifier', guid: $('catSel').value, element: $('catEl').value}], 'Catalyst added'); };
+
+// ---- campaign ----
+function renderActs() {
+  var camp = S.view.save.campaign || {}, rows = '<tr><th>Act</th><th>Matches</th><th></th></tr>';
+  S.cat.acts.forEach(function (a) {
+    rows += '<tr><td>' + esc(a.name) + '</td><td>' + a.matches + '</td><td><button data-cact="' + esc(a.guid) + '">Complete</button> <button class="danger" data-ract="' + esc(a.guid) + '">Reset</button></td></tr>';
+  });
+  $('actsTbl').innerHTML = rows;
+}
+$('actsTbl').onclick = function (e) {
+  var c = e.target.dataset.cact, r = e.target.dataset.ract;
+  if (c) ops([{op: 'campaign', action: 'complete', act: c}], 'Act completed');
+  if (r) ops([{op: 'campaign', action: 'reset', act: r}], 'Act reset');
+};
+$('campAll').onclick = function () { ops([{op: 'campaign', action: 'complete'}], 'All acts completed'); };
+$('campReset').onclick = function () { if (confirm('Reset all story progress?')) ops([{op: 'campaign', action: 'reset'}], 'Story progress reset'); };
+
+// ---- server ----
+var CFG_HELP = {skip_tutorials: 'New accounts skip the tutorial', xp_rate: 'Fighter XP multiplier', currency_rate: 'Coin reward multiplier',
+  player_xp_per_enemy_fs: 'Player XP per enemy fighter score', lta_events: '"rotate" or "all"', lta_sets_per_day: 'Event sets per day (rotate mode)',
+  collection_capacity: 'Collection size limit', country_code: 'Country code reported to the game'};
+function loadServer() {
+  api('GET', 'config').then(function (r) {
+    S.cfg = r.config; var f = '';
+    Object.keys(r.config).forEach(function (k) {
+      var v = r.config[k], t = typeof v;
+      f += '<div class="row"><label style="flex:1">' + esc(k) + (CFG_HELP[k] ? ' <span class="muted">— ' + esc(CFG_HELP[k]) + '</span>' : '') + '</label>' +
+        (t === 'boolean' ? '<input type="checkbox" data-cfg="' + esc(k) + '" data-t="b"' + (v ? ' checked' : '') + '>' :
+          t === 'number' ? '<input type="number" step="any" data-cfg="' + esc(k) + '" data-t="n" value="' + v + '">' :
+            t === 'string' ? '<input data-cfg="' + esc(k) + '" data-t="s" value="' + esc(v) + '">' :
+              '<input data-cfg="' + esc(k) + '" data-t="j" style="min-width:260px" value="' + esc(JSON.stringify(v)) + '">') + '</div>';
+    });
+    $('cfgForm').innerHTML = f;
+  }).catch(fail);
+  api('GET', 'status').then(function (s) { $('statusBox').textContent = JSON.stringify(s, null, 1); }).catch(fail);
+  $('refreshLog').onclick();
+}
+$('saveCfg').onclick = function () {
+  var out = {};
+  try {
+    Array.prototype.forEach.call(document.querySelectorAll('[data-cfg]'), function (i) {
+      var t = i.dataset.t; out[i.dataset.cfg] = t === 'b' ? i.checked : t === 'n' ? Number(i.value) : t === 's' ? i.value : JSON.parse(i.value);
+    });
+  } catch (e) { return toast('Invalid JSON value: ' + e.message, true); }
+  api('PUT', 'config', out).then(function () { toast('Settings saved'); }).catch(fail);
+};
+$('refreshLog').onclick = function () { api('GET', 'logs').then(function (r) { var b = $('logBox'); b.textContent = r.lines.slice(-200).join('\n'); b.scrollTop = b.scrollHeight; }).catch(fail); };
+
+// ---- raw ----
+$('saveRaw').onclick = function () {
+  var doc; try { doc = JSON.parse($('rawBox').value); } catch (e) { return toast('Invalid JSON: ' + e.message, true); }
+  api('PUT', 'users/' + S.uid, doc).then(function (v) { S.view = v; render(); toast('Raw save stored'); }).catch(fail);
+};
+init();
+</script>
+</body>
+</html>

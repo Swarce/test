@@ -1,0 +1,11 @@
+{
+  "skip_tutorials": true,
+  "starting_currencies": {"SoftCurrency": 50000, "HardCurrency": 500, "DailyEventTicket": 4},
+  "extra_starting_characters": [],
+  "xp_rate": 1.0,
+  "currency_rate": 1.0,
+  "player_xp_per_enemy_fs": 0.25,
+  "lta_events": "rotate",
+  "lta_sets_per_day": 3,
+  "auto_register_password_accounts": true
+}
