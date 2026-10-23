@@ -97,6 +97,10 @@ public final class HttpServer {
     private volatile ServerSocket socket;
     private volatile boolean running;
     public final String name;
+    /** Counts TLS handshakes the peer aborted — visible in the log, which usually means cert rejection. */
+    public final java.util.concurrent.atomic.AtomicLong tlsFailures = new java.util.concurrent.atomic.AtomicLong();
+    /** Counts connections that completed at least one request, so "reached but TLS-failed" is distinguishable. */
+    public final java.util.concurrent.atomic.AtomicLong served = new java.util.concurrent.atomic.AtomicLong();
 
     public HttpServer(String name, Handler handler, SSLContext tls) {
         this.name = name;
@@ -194,6 +198,7 @@ public final class HttpServer {
                 if (resp == null) {
                     resp = new Response(404, new byte[0]);
                 }
+                served.incrementAndGet();
                 boolean close = "close".equalsIgnoreCase(req.headers.get("Connection"));
                 writeResponse(out, req, resp, close);
                 Log.d(name + " " + req.method + " " + req.target + " -> " + resp.status + " (" + (System.currentTimeMillis() - t0) + " ms)");
@@ -205,6 +210,14 @@ public final class HttpServer {
             // idle keep-alive connection
         } catch (SocketException ignored) {
             // client went away
+        } catch (javax.net.ssl.SSLException e) {
+            // the game's TLS layer rejected our certificate (or aborted the handshake): the most
+            // common reason a redirected game cannot connect, so make it visible in the log
+            long n = tlsFailures.incrementAndGet();
+            if (n <= 20 || n % 50 == 0) {
+                Log.w(name + ": a TLS handshake from " + s.getInetAddress() + " failed (" + e.getMessage()
+                        + "). The app may not accept this server's certificate. [" + n + " so far]");
+            }
         } catch (IOException e) {
             Log.d(name + " connection error: " + e);
         } finally {

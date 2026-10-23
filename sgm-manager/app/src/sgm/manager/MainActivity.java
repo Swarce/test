@@ -252,6 +252,16 @@ public final class MainActivity extends Activity {
         if (pe != null) {
             sb.append(" · ").append(pe.dnsAnswered).append(" lookups redirected, ").append(pe.reflected).append(" packets");
         }
+        if (SgmVpnService.gateway != null) {
+            long tlsFail = SgmVpnService.gateway.tlsFailures();
+            long served = SgmVpnService.gateway.served();
+            sb.append("\nGame requests answered: ").append(served);
+            if (tlsFail > 0) {
+                sb.append("\n\n⚠ The game tried to connect ").append(tlsFail).append(" time(s) but rejected this "
+                        + "server's certificate (TLS handshake failed). The redirect is working, but the game will not "
+                        + "talk to the server until it accepts the certificate. Share the log and send it over.");
+            }
+        }
         if (SgmVpnService.running) {
             sb.append("\nOfficial download server: ").append(SgmVpnService.cdnStatus);
         }

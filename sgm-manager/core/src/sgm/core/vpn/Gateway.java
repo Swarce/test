@@ -107,4 +107,22 @@ public final class Gateway {
         }
         listeners.clear();
     }
+
+    /** Total TLS handshakes the game aborted across the HTTPS listeners (usually = cert rejection). */
+    public long tlsFailures() {
+        long n = 0;
+        for (HttpServer h : listeners) {
+            n += h.tlsFailures.get();
+        }
+        return n;
+    }
+
+    /** Requests that completed (got past TLS), across all listeners. */
+    public long served() {
+        long n = 0;
+        for (HttpServer h : listeners) {
+            n += h.served.get();
+        }
+        return n;
+    }
 }
