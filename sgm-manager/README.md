@@ -66,8 +66,10 @@ ignored by the game. That leaves:
 - **Stock, non-rooted device:** there is no supported way to add a system CA, so this method
   cannot work as-is. See *If you cannot install a system CA* below.
 
-To check it worked, start the server and watch the main screen: *Game requests answered* rises
-above 0 and the certificate-rejection warning does not appear.
+To check it worked, start the server and tap **Check if the server certificate is trusted** — it
+asks the system (its default trust store, the same one the game uses) to connect to the server and
+tells you ✓ trusted or ✗ not trusted, so you know before launching the game. When trusted,
+*Game requests answered* also rises above 0 and the certificate-rejection warning disappears.
 
 ### If you cannot install a system CA
 

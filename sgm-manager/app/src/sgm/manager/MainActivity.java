@@ -22,11 +22,14 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 import sgm.core.Log;
+import sgm.core.Protocol;
 import sgm.core.vpn.PacketEngine;
 
 /** Manager screen: import game data, start/stop the private server, open the account editor. */
@@ -111,6 +114,21 @@ public final class MainActivity extends Activity {
             @Override
             public void onClick(View v) {
                 exportCa();
+            }
+        }));
+        col.addView(button("Check if the server certificate is trusted", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (!SgmVpnService.running) {
+                    toast("Start the server first");
+                    return;
+                }
+                background("Checking certificate trust…", new Job() {
+                    @Override
+                    public String run() {
+                        return checkTrust();
+                    }
+                });
             }
         }));
         col.addView(button("Open account editor", new View.OnClickListener() {
@@ -357,6 +375,34 @@ public final class MainActivity extends Activity {
                         .setPositiveButton("OK", null).show();
             } catch (Exception e) {
                 toast("Could not save: " + e.getMessage());
+            }
+        }
+    }
+
+    /** Asks the system (its default trust store) to connect to our own server, to see if the CA is trusted. */
+    private String checkTrust() {
+        HttpURLConnection c = null;
+        try {
+            // this app is inside the VPN too, so the hostname resolves to the local server; the
+            // default (system) trust store is used, exactly like the game's TLS check
+            URL url = new URL("https://" + Protocol.API_HOST + "/v1/ping");
+            c = (HttpURLConnection) url.openConnection();
+            c.setConnectTimeout(8000);
+            c.setReadTimeout(8000);
+            int code = c.getResponseCode();
+            return "✓ Trusted.\n\nThe system accepts the server's certificate (HTTP " + code + "). The game should "
+                    + "connect now — close Skullgirls completely and open it again.";
+        } catch (javax.net.ssl.SSLHandshakeException e) {
+            return "✗ Not trusted yet.\n\nThe server is reachable but the system does NOT trust its certificate. The "
+                    + "CA must be in the ANDROID SYSTEM trust store — a certificate added through Settings → Security "
+                    + "(a \"user\" certificate) does not count on Android 7+. Installing it as a system CA needs "
+                    + "root/Magisk or an emulator; see the README.";
+        } catch (Exception e) {
+            return "Could not reach the server (" + e.getClass().getSimpleName() + ": " + e.getMessage() + "). Make "
+                    + "sure the server is running and the VPN is active.";
+        } finally {
+            if (c != null) {
+                c.disconnect();
             }
         }
     }
