@@ -54,21 +54,40 @@ public final class SgmVpnService extends VpnService {
     public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent == null ? ACTION_START : intent.getAction();
         if (ACTION_STOP.equals(action)) {
-            shutdown();
-            stopSelf();
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    synchronized (SgmVpnService.this) {
+                        shutdown();
+                    }
+                    stopSelf();
+                }
+            }, "sgm-stop").start();
             return START_NOT_STICKY;
         }
         if (!running) {
-            boolean offline = intent != null && intent.getBooleanExtra(EXTRA_OFFLINE, false);
+            final boolean offline = intent != null && intent.getBooleanExtra(EXTRA_OFFLINE, false);
             startForeground(1, notification(this, "Starting…"));
-            try {
-                begin(offline);
-            } catch (Exception e) {
-                Log.e("could not start", e);
-                status = "error: " + e.getMessage();
-                shutdown();
-                stopSelf();
-            }
+            status = "starting…";
+            // loading game data and creating the TLS key can take seconds: keep the main thread free
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    synchronized (SgmVpnService.this) {
+                        if (running) {
+                            return;
+                        }
+                        try {
+                            begin(offline);
+                        } catch (Exception e) {
+                            Log.e("could not start", e);
+                            status = "error: " + e.getMessage();
+                            shutdown();
+                            stopSelf();
+                        }
+                    }
+                }
+            }, "sgm-start").start();
         }
         return START_STICKY;
     }
@@ -164,13 +183,25 @@ public final class SgmVpnService extends VpnService {
         }
         if (tun != null) {
             // a blocked read() on the interface does not return on close; poke it with a packet
+            // (from a worker thread: this also runs on the main thread, where sockets are not allowed)
+            Thread poke = new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        DatagramSocket s = new DatagramSocket();
+                        byte[] b = new byte[1];
+                        s.send(new DatagramPacket(b, 1, InetAddress.getByName(Gateway.DNS_ADDR), 9));
+                        s.close();
+                    } catch (Exception ignored) {
+                        // best effort
+                    }
+                }
+            }, "sgm-poke");
+            poke.start();
             try {
-                DatagramSocket s = new DatagramSocket();
-                byte[] b = new byte[1];
-                s.send(new DatagramPacket(b, 1, InetAddress.getByName(Gateway.DNS_ADDR), 9));
-                s.close();
-            } catch (IOException ignored) {
-                // best effort
+                poke.join(500);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
             }
             try {
                 tun.close();
@@ -188,13 +219,17 @@ public final class SgmVpnService extends VpnService {
     @Override
     public void onRevoke() {
         Log.i("VPN revoked by the system or another VPN app");
-        shutdown();
+        synchronized (this) {
+            shutdown();
+        }
         stopSelf();
     }
 
     @Override
     public void onDestroy() {
-        shutdown();
+        synchronized (this) {
+            shutdown();
+        }
         super.onDestroy();
     }
 

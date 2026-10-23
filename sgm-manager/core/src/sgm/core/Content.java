@@ -68,6 +68,7 @@ public final class Content {
             throw new IOException("no content found in " + path);
         }
         c.indexCampaign();
+        c.pool.clear();
         return c;
     }
 
@@ -89,8 +90,11 @@ public final class Content {
         return new String(out.toByteArray(), Protocol.UTF8);
     }
 
+    /** Shared by every file of one load (see Json.parse). */
+    private final HashMap<Object, Object> pool = new HashMap<Object, Object>();
+
     private void addFile(String text) {
-        Map<String, Object> m = Json.map(Json.parse(text));
+        Map<String, Object> m = Json.map(Json.parse(text, pool));
         for (Map.Entry<String, Object> e : m.entrySet()) {
             Map<String, Object> rec = Json.map(e.getValue());
             String key = e.getKey();

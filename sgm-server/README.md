@@ -28,6 +28,11 @@ Unknown endpoints answer `200 {}` and are logged as `UNHANDLED`.
 
 ## Quick start
 
+**On Android without a PC:** use [`sgm-manager`](../sgm-manager) — an app that imports the game
+data from the installed game, runs this server on the phone, redirects only the game to it and
+adds an account editor (currencies, fighters, items, progress). The rest of this section is
+the PC setup.
+
 Requires Python 3.10+ (server: standard library only).
 
 1. **Extract the game content** from your client (XAPK, APK + split APKs, or an unpacked folder):
@@ -92,7 +97,9 @@ SGM_CONTENT=content python -m unittest discover -s tests -v
 
 `tests/client_sim.py` reproduces the client's request signing, cookies, Base64 bodies and
 response-signature checks; `tests/test_flow.py` drives login, startup calls, story and event
-fights, relics, progression and daily challenges end to end.
+fights, relics, progression and daily challenges end to end. Set `SGM_JAVA_CP` to the compiled
+classes of `../sgm-manager` to run the same suite against its Java port, and use
+`tests/parity.py` to compare the game formulas of both.
 
 Layout:
 

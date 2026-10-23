@@ -15,7 +15,12 @@ public final class Json {
     }
 
     public static Object parse(String s) {
-        P p = new P(s);
+        return parse(s, new java.util.HashMap<Object, Object>());
+    }
+
+    /** Parses with a shared pool: equal keys, short strings and numbers become one instance. */
+    public static Object parse(String s, java.util.HashMap<Object, Object> pool) {
+        P p = new P(s, pool);
         p.ws();
         Object v = p.value();
         p.ws();
@@ -112,9 +117,25 @@ public final class Json {
     private static final class P {
         final String s;
         int i;
+        /** Keys and short values repeat a lot in game data; sharing them saves most of the heap. */
+        final java.util.HashMap<Object, Object> pool;
 
-        P(String s) {
+        String share(String v) {
+            return v.length() > 64 ? v : (String) shareAny(v);
+        }
+
+        Object shareAny(Object v) {
+            Object have = pool.get(v);
+            if (have == null) {
+                pool.put(v, v);
+                return v;
+            }
+            return have;
+        }
+
+        P(String s, java.util.HashMap<Object, Object> pool) {
             this.s = s;
+            this.pool = pool;
         }
 
         void ws() {
@@ -135,7 +156,7 @@ public final class Json {
                 return arr();
             }
             if (c == '"') {
-                return string();
+                return share(string());
             }
             if (s.startsWith("true", i)) {
                 i += 4;
@@ -162,7 +183,7 @@ public final class Json {
             }
             while (true) {
                 ws();
-                String k = string();
+                String k = share(string());
                 ws();
                 expect(':');
                 ws();
@@ -253,12 +274,13 @@ public final class Json {
             }
             if (!frac) {
                 try {
-                    return Long.parseLong(t);
+                    long v = Long.parseLong(t);
+                    return v >= -128 && v <= 127 ? Long.valueOf(v) : shareAny(v);
                 } catch (NumberFormatException ignored) {
                     // fall through to double
                 }
             }
-            return Double.parseDouble(t);
+            return shareAny(Double.parseDouble(t));
         }
     }
 

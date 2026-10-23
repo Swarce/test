@@ -80,6 +80,20 @@ public final class UnityExtractor {
     /** class -> key -> record */
     public final Map<String, Map<String, Object>> out = new TreeMap<String, Map<String, Object>>();
     public final Map<String, Integer> errors = new TreeMap<String, Integer>();
+    /** Repeated values (refs, small strings, numbers) are stored once. */
+    private final HashMap<Object, Object> pool = new HashMap<Object, Object>();
+
+    private Object share(Object v) {
+        if (v == null || (v instanceof String && ((String) v).length() > 64)) {
+            return v;
+        }
+        Object have = pool.get(v);
+        if (have == null) {
+            pool.put(v, v);
+            return v;
+        }
+        return have;
+    }
 
     public UnityExtractor(Map<String, Object> typetrees, File tmpDir, Progress progress) {
         for (Map.Entry<String, Object> e : Json.getMap(typetrees, "classes").entrySet()) {
@@ -388,7 +402,7 @@ public final class UnityExtractor {
         if (align) {
             r.align();
         }
-        return v;
+        return v instanceof Map || v instanceof List ? v : share(v);
     }
 
     private static String hex(byte[] b) {
