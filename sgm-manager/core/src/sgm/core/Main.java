@@ -54,7 +54,15 @@ public final class Main {
             }
         }
         Server server = Server.open(new File(content), dataDir, overrides);
-        HttpServer api = new HttpServer("api", server, tls ? Tls.serverContext(dataDir, Protocol.API_HOST) : null);
+        if (tls) {
+            // write the CA so it can be installed as a trusted root (the game validates against it)
+            File caPem = new File(dataDir, "ca.pem");
+            java.io.FileOutputStream caOut = new java.io.FileOutputStream(caPem);
+            caOut.write(Tls.caCertPem(dataDir).getBytes(Protocol.UTF8));
+            caOut.close();
+            Log.i("CA certificate for clients to trust: " + caPem.getAbsolutePath() + " (Android system name " + Tls.caAndroidHash(dataDir) + ")");
+        }
+        HttpServer api = new HttpServer("api", server, tls ? Tls.serverContext(dataDir, Protocol.API_HOST, Protocol.CDN_HOST) : null);
         api.start(host, port);
         if (adminPort > 0) {
             Admin admin = new Admin(server, dataDir, null);

@@ -17,8 +17,7 @@ The manager opens a local VPN that **only the game is routed through**, and only
 virtual addresses. The game's lookups for its API and download (CDN) hosts are answered with
 virtual addresses; connections to them are handed to the embedded server by rewriting packet
 addresses on the VPN interface. Everything else the game or any other app does uses the normal
-network. No root and no APK modification: the game accepts the server's self-signed certificate
-(see `../sgm-server/docs/PROTOCOL.md`, *TLS*).
+network. The game APK is never modified.
 
 The CDN stand-in matters even with internet: before talking to the API, the title screen
 downloads `maintenanceMode.json` from the CDN, and a connection failure there is **error 867**.
@@ -33,9 +32,52 @@ the CDN cannot be reached.
    game's design data (characters, acts, loot tables…) straight from the installed APK — about
    a minute. Alternatively import a zip of the JSON files made with
    `sgm-server/tools/extract_content.py`.
-3. Tap **Start server** and accept Android's VPN prompt.
-4. Close Skullgirls completely and launch it (the button in the manager works too). Log in as
+3. **Install the server's CA certificate** (one time) — see below. Without this the game refuses
+   the server's certificate and shows **error 867** on the title screen.
+4. Tap **Start server** and accept Android's VPN prompt.
+5. Close Skullgirls completely and launch it (the button in the manager works too). Log in as
    guest: a new account is created with the starting team.
+
+## Making the game trust the server (required)
+
+This build checks TLS certificates through Android's system trust store (it bridges to the
+platform `X509TrustManager` — confirmed in `libunity.so`). It does **not** honour a
+self-signed certificate, so the server's certificate has to chain to a CA the system trusts.
+The manager therefore runs its own small certificate authority: it signs the certificate the
+server presents, and you install that **CA certificate** once as a trusted root. The game then
+accepts the server. The game APK is never touched.
+
+Each install of the manager generates its own CA (kept in the app's private storage; the private
+key never leaves the device). Export it with **Export CA certificate** on the main screen.
+
+The certificate must go into the **system** trust store. Android 7+ does **not** let apps trust
+user-installed certificates unless the app ships a network-security-config allowing it, and the
+game ships none — so a certificate added through *Settings → Security → Install certificate* is
+ignored by the game. That leaves:
+
+- **Rooted device with Magisk (recommended).** Install a module that makes certificates
+  system-trusted — e.g. *Magisk Trust User Certs* / *Always Trust User Certs* — then install the
+  exported certificate the normal way, or drop the exported file (named `<hash>.0`, the name the
+  export suggests) into the system CA directory the module manages, and reboot.
+- **Emulator with a writable system** (e.g. an AVD without Google Play): `adb root`,
+  `adb remount`, push the exported `<hash>.0` into `/system/etc/security/cacerts/`,
+  `chmod 644`, reboot. (On Android 14+ the store moved to an APEX; a Magisk-style module is the
+  practical route there.)
+- **Stock, non-rooted device:** there is no supported way to add a system CA, so this method
+  cannot work as-is. See *If you cannot install a system CA* below.
+
+To check it worked, start the server and watch the main screen: *Game requests answered* rises
+above 0 and the certificate-rejection warning does not appear.
+
+### If you cannot install a system CA
+
+The only alternative is to make the game trust the certificate from inside the app — e.g. by
+adding a network-security-config that trusts your CA — which means repackaging and re-signing the
+APK. This build is wrapped in Google Play's integrity/anti-tamper protection (`pairip`), which is
+designed to detect exactly that and will likely refuse to run the repackaged app; re-signing also
+invalidates the installed copy, so Android makes you uninstall first, which deletes the game's
+downloaded assets. For those reasons this project does not modify the game and does not include
+steps to defeat that protection. A rooted device or an emulator is the practical path.
 
 **Playing without internet.** At every start the game re-downloads three small index files
 (`vram.bytes`, `fingerprints.bytes`, `Android/platform_fingerprints.bytes`) and then any asset
@@ -65,9 +107,14 @@ return to the title screen or restart the game to see the changes.
 
 ## Caveats
 
-* **Not yet tested on a physical phone.** Every part was tested here (see *Testing*), including
-  the VPN address rewriting against a real Linux kernel TUN device, but Android adds its own
-  routing policy on top. Please report what you see in the manager's log if it does not work.
+* **Needs a system-trusted CA** (see *Making the game trust the server*): in practice a rooted
+  device or an emulator. On a stock non-rooted phone the game rejects the server's certificate
+  (error 867) and this cannot be worked around without modifying the game.
+* **Not yet tested as a whole on a physical phone.** Each part is tested here (see *Testing*):
+  the VPN address rewriting against a real Linux kernel TUN device, and the CA/TLS trust path
+  with a client that trusts only the CA (as Android does). On a real device the redirect and
+  packet handling were confirmed from a user's log; the remaining step is the system-CA install.
+  Please report what the manager's log shows if it does not work.
 * Android **Private DNS** set to a specific provider (*Settings → Network → Private DNS →
   hostname*) bypasses the manager's resolver; use *Automatic* or *Off*. The manager warns about it.
 * Only one VPN app can be active at a time.
@@ -89,8 +136,8 @@ java -jar build/sgm-core.jar --content content --data sgm-data --port 443
 
 Options: `--http` (no TLS), `--host`, `--admin-port N` (0 disables the editor), `--config FILE`,
 `-v`. Saves are plain JSON files in `--data` (`users/<id>.json`, same shape as the Python
-server's), so they are easy to back up. Redirect the game exactly as described in the server's
-README.
+server's), so they are easy to back up. With TLS it writes its CA to `<data>/ca.pem` and prints
+the path; a client must trust that CA (and reach the API and CDN hosts via your DNS redirect).
 
 The importer also runs on a PC:
 `java -cp build/sgm-core.jar sgm.core.extract.ExtractMain app/assets/typetrees.json content base.apk`.
@@ -115,6 +162,7 @@ version with `python tools/dump_typetrees.py <game.xapk> -o app/assets/typetrees
 | Game math | `ParityDump` + `sgm-server/tests/parity.py`: XP ladders, stats and fighter scores of every variant/tier/level identical to the Python port (13,310 values) |
 | VPN path | `sudo python tools/tun_shuttle.py <classpath> content ../sgm-server`: creates a TUN device and drives DNS → TLS login → fight, the maintenance check, index files and an 8 MB streamed bundle from a fake CDN, resume requests, then switches the fake CDN off and checks the saved copies, fast failures and the connectivity check — through the exact packet engine the app uses |
 | Importer | `tools/compare_content.py`: the on-device importer's output is identical to `extract_content.py`'s (16,100 objects, 172 classes) |
+| CA / TLS trust | a client whose trust store holds **only** the manager's CA completes a real HTTPS `GET /v1/ping` against the server (hostname verification on) and gets `200 OK` — the same validation Android does after the CA is installed |
 
 Layout:
 

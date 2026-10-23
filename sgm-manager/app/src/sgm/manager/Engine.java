@@ -123,6 +123,16 @@ final class Engine {
         return admin.token;
     }
 
+    /** The manager's CA certificate in PEM, to install on the device as a trusted root. */
+    String caPem() throws Exception {
+        return sgm.core.Tls.caCertPem(dataDir);
+    }
+
+    /** Android's system-store filename for the CA certificate (subject hash + ".0"). */
+    String caFileName() throws Exception {
+        return sgm.core.Tls.caAndroidHash(dataDir);
+    }
+
     static byte[] readAll(InputStream in) throws IOException {
         try {
             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();

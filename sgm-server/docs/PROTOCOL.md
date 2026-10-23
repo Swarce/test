@@ -50,10 +50,18 @@ signature does not match.
 ### TLS
 
 `SGInitialize.Init` installs `HttpsHelper.MyRemoteCertificateValidationCallback` as
-`ServicePointManager.ServerCertificateValidationCallback`. On policy errors it rebuilds the chain
-with `X509VerificationFlags.AllFlags` (which ignores unknown roots) and accepts the result, so a
-self-signed certificate is accepted and hostname mismatches are not checked. This is what lets a
-private server work with only a DNS redirect.
+`ServicePointManager.ServerCertificateValidationCallback`, which rebuilds the chain with
+`X509VerificationFlags.AllFlags` and accepts it. That callback governs the legacy Mono
+`HttpWebRequest`/`ServicePointManager` path.
+
+**However**, on the 8.11.x Android build the HTTPS requests validate through Unity's TLS, which
+bridges to Android's Java `X509TrustManager` (`TrustManagerFactory` / `getTrustManagers` /
+`getAcceptedIssuers` in `libunity.so`) and does **not** honour that callback. A self-signed
+certificate is rejected at the handshake (`TLSV1_ALERT_ACCESS_DENIED`). So a redirected server
+must present a certificate that chains to a CA in the device's **system** trust store — i.e. you
+install a CA (the Android manager runs one for this; see `../../sgm-manager`). A DNS redirect
+alone is not enough on this build. User-installed CAs do not count on Android 7+ unless the app
+ships a network-security-config, which this game does not.
 
 ## Authentication
 

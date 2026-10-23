@@ -33,6 +33,7 @@ import sgm.core.vpn.PacketEngine;
 public final class MainActivity extends Activity {
     private static final int REQ_VPN = 1;
     private static final int REQ_ZIP = 2;
+    private static final int REQ_SAVE_CA = 3;
 
     private TextView status;
     private TextView log;
@@ -106,6 +107,12 @@ public final class MainActivity extends Activity {
             }
         });
         col.addView(startBtn);
+        col.addView(button("Export CA certificate (to trust the server)", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                exportCa();
+            }
+        }));
         col.addView(button("Open account editor", new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -258,8 +265,9 @@ public final class MainActivity extends Activity {
             sb.append("\nGame requests answered: ").append(served);
             if (tlsFail > 0) {
                 sb.append("\n\n⚠ The game tried to connect ").append(tlsFail).append(" time(s) but rejected this "
-                        + "server's certificate (TLS handshake failed). The redirect is working, but the game will not "
-                        + "talk to the server until it accepts the certificate. Share the log and send it over.");
+                        + "server's certificate (TLS handshake failed). The redirect works, but the game will not talk "
+                        + "to the server until its CA certificate is installed as a system-trusted root. Use "
+                        + "\"Export CA certificate\" above; see the README for the install steps.");
             }
         }
         if (SgmVpnService.running) {
@@ -332,6 +340,64 @@ public final class MainActivity extends Activity {
                     return importZip(uri);
                 }
             });
+        } else if (req == REQ_SAVE_CA && result == RESULT_OK && data != null && data.getData() != null) {
+            try {
+                FileOutputStream out = null;
+                java.io.OutputStream os = getContentResolver().openOutputStream(data.getData());
+                try {
+                    os.write(Engine.get(this).caPem().getBytes("UTF-8"));
+                } finally {
+                    os.close();
+                }
+                new AlertDialog.Builder(this).setTitle("CA certificate saved")
+                        .setMessage("Saved. To make the game trust the server, this certificate must go into the "
+                                + "ANDROID SYSTEM trust store (an app-installed \"user\" certificate is not enough on "
+                                + "Android 7+). That needs root/Magisk or an emulator with a writable system — the "
+                                + "README has the steps. No change to the game itself is needed.")
+                        .setPositiveButton("OK", null).show();
+            } catch (Exception e) {
+                toast("Could not save: " + e.getMessage());
+            }
+        }
+    }
+
+    private void exportCa() {
+        try {
+            String name = Engine.get(this).caFileName();
+            new AlertDialog.Builder(this).setTitle("Export CA certificate")
+                    .setMessage("This saves the manager's CA certificate (" + name + "). Install it in the device's "
+                            + "SYSTEM trust store so the game accepts the private server. This needs root/Magisk or an "
+                            + "emulator with a writable system; the README explains how. The game APK is not modified.")
+                    .setPositiveButton("Save", new android.content.DialogInterface.OnClickListener() {
+                        @Override
+                        public void onClick(android.content.DialogInterface d, int w) {
+                            try {
+                                Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+                                i.addCategory(Intent.CATEGORY_OPENABLE);
+                                i.setType("application/x-pem-file");
+                                i.putExtra(Intent.EXTRA_TITLE, Engine.get(MainActivity.this).caFileName());
+                                startActivityForResult(i, REQ_SAVE_CA);
+                            } catch (Exception e) {
+                                toast("Error: " + e.getMessage());
+                            }
+                        }
+                    })
+                    .setNeutralButton("Share", new android.content.DialogInterface.OnClickListener() {
+                        @Override
+                        public void onClick(android.content.DialogInterface d, int w) {
+                            try {
+                                Intent i = new Intent(Intent.ACTION_SEND);
+                                i.setType("application/x-pem-file");
+                                i.putExtra(Intent.EXTRA_TEXT, Engine.get(MainActivity.this).caPem());
+                                startActivity(Intent.createChooser(i, "Share CA certificate"));
+                            } catch (Exception e) {
+                                toast("Error: " + e.getMessage());
+                            }
+                        }
+                    })
+                    .setNegativeButton("Cancel", null).show();
+        } catch (Exception e) {
+            toast("Could not prepare the certificate: " + e.getMessage());
         }
     }
 
