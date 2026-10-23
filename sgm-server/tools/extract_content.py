@@ -73,6 +73,24 @@ class FixedTypeTreeGenerator(TypeTreeGenerator):
         return nodes
 
 
+def localization_table(obj):
+    """The English string table is a TextAsset named "en" holding one JSON object."""
+    try:
+        ta = obj.read()
+    except Exception:  # noqa: BLE001 - not every TextAsset parses; none of those matter here
+        return None
+    if getattr(ta, 'm_Name', '') != 'en':
+        return None
+    text = ta.m_Script
+    if isinstance(text, (bytes, bytearray)):
+        text = bytes(text).decode('utf-8', 'replace')
+    try:
+        table = json.loads(text.lstrip('\ufeff'))
+    except ValueError:
+        return None
+    return table if isinstance(table, dict) and 'Char_Annie_Name' in table else None
+
+
 def collect_inputs(paths, work):
     """Lay out assets/bin/Data (split files merged) plus libil2cpp.so and global-metadata.dat."""
     data_dir = os.path.join(work, 'Data')
@@ -173,6 +191,12 @@ def main():
             return v
 
         for obj in env.objects:
+            if obj.type.name == 'TextAsset':
+                strings = localization_table(obj)
+                if strings:
+                    key = f'{os.path.basename(obj.assets_file.name)}:{obj.path_id}'
+                    out['Localization'][key] = {'_class': 'Localization', '_name': 'en', 'strings': strings}
+                continue
             if obj.type.name != 'MonoBehaviour':
                 continue
             af = obj.assets_file

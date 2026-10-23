@@ -2,12 +2,19 @@
 
 Requires extracted content: set SGM_CONTENT (default: ./content).
 Run: python -m unittest discover -s tests -v
+
+Set SGM_JAVA_CP to the compiled classes (or jar) of the Java server in ../sgm-manager to run the
+same suite against it instead of the Python server.
 """
 import os
+import shutil
 import socket
+import subprocess
 import sys
 import tempfile
 import threading
+import time
+import types
 import unittest
 from http.server import ThreadingHTTPServer
 
@@ -17,9 +24,11 @@ sys.path.insert(0, os.path.dirname(__file__))
 from sgserver.__main__ import DEFAULT_CONFIG, build_app  # noqa: E402
 from sgserver import protocol  # noqa: E402
 from sgserver.server import Handler  # noqa: E402
+from sgserver.content import Content  # noqa: E402
 from client_sim import GameClient  # noqa: E402
 
 CONTENT = os.environ.get('SGM_CONTENT', os.path.join(os.path.dirname(__file__), '..', 'content'))
+JAVA_CP = os.environ.get('SGM_JAVA_CP')
 
 
 def free_port():
@@ -35,15 +44,42 @@ class FlowTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.mkdtemp()
-        cls.app = build_app(CONTENT, os.path.join(cls.tmp, 'test.db'), dict(DEFAULT_CONFIG))
         cls.port = free_port()
+        cls.httpd = cls.proc = None
+        if JAVA_CP:
+            # the tests only read game content through cls.app
+            cls.app = types.SimpleNamespace(content=Content(CONTENT))
+            cls.log = open(os.path.join(cls.tmp, 'java.log'), 'w')
+            cls.proc = subprocess.Popen(['java', '-cp', JAVA_CP, 'sgm.core.Main', '--content', CONTENT,
+                                         '--data', os.path.join(cls.tmp, 'data'), '--http', '--host', '127.0.0.1',
+                                         '--port', str(cls.port), '--admin-port', '0'],
+                                        stdout=subprocess.DEVNULL, stderr=cls.log)
+            deadline = time.time() + 60
+            while time.time() < deadline:
+                try:
+                    socket.create_connection(('127.0.0.1', cls.port), timeout=1).close()
+                    break
+                except OSError:
+                    if cls.proc.poll() is not None:
+                        raise RuntimeError('java server exited: ' + open(os.path.join(cls.tmp, 'java.log')).read())
+                    time.sleep(0.2)
+            return
+        cls.app = build_app(CONTENT, os.path.join(cls.tmp, 'test.db'), dict(DEFAULT_CONFIG))
         handler = type('H', (Handler,), {'app': cls.app})
         cls.httpd = ThreadingHTTPServer(('127.0.0.1', cls.port), handler)
         threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
 
     @classmethod
     def tearDownClass(cls):
-        cls.httpd.shutdown()
+        if cls.httpd:
+            cls.httpd.shutdown()
+        if cls.proc:
+            cls.proc.terminate()
+            cls.proc.wait()
+            cls.log.close()
+            if os.environ.get('SGM_JAVA_LOG'):
+                shutil.copy(os.path.join(cls.tmp, 'java.log'), os.environ['SGM_JAVA_LOG'])
+        shutil.rmtree(cls.tmp, ignore_errors=True)
 
     def client(self, device='dev-1'):
         return GameClient('127.0.0.1', self.port, device_id=device)

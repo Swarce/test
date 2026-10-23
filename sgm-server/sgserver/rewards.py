@@ -108,7 +108,7 @@ def grant_loot(svc, user, loot, mult=1, depth=0):
             return []
         out = []
         for _ in range(max(1, loot.get('amount', 1))):
-            mv = svc.grant_move(user, g['guid'])
+            mv = svc.grant_move(user, g['guid'], pool='moves' if lt == 2 else 'assistMoves')
             key = 'moveReward' if lt == 2 else 'assistMoveReward'
             out.append({'type': 'Move' if lt == 2 else 'AssistMove',
                         key: {'moveGuid': g['guid'], 'moveInstanceId': mv['id'], 'statGuids': []}})

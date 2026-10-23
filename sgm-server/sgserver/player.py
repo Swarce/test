@@ -153,10 +153,10 @@ class PlayerService:
         t = variant.get('initialTier', 0)
         return (chances[t] / 100.0) if t < len(chances) else 0.0
 
-    def grant_move(self, user, move_guid, new=True):
+    def grant_move(self, user, move_guid, new=True, pool='moves'):
         mid = new_id()
         mv = {'id': mid, 'guid': move_guid, 'evolution': 1, 'stats': [], 'locked': False, 'new': new}
-        user['moves'][mid] = mv
+        user[pool][mid] = mv
         return mv
 
     def apply_loot(self, user, loot, mult=1):
