@@ -10,3 +10,6 @@ content/
 *.keystore
 __pycache__/
 *.pyc
+
+# local agent worktrees
+.claude/worktrees/
