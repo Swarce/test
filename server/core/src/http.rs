@@ -140,7 +140,14 @@ fn handle_conn(stream: TcpStream, handler: Arc<dyn Handler>) -> std::io::Result<
             .map(|c| !c.eq_ignore_ascii_case("close"))
             .unwrap_or(true);
         let is_head = req.method.eq_ignore_ascii_case("HEAD");
-        let resp = handler.handle(&req);
+        // A panic in one handler must not take down the process (the embedded host shares the game's
+        // process): catch it and return 500 so the connection and the game survive.
+        let resp = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handler.handle(&req)))
+            .unwrap_or_else(|_| {
+                Response::new(500)
+                    .header("Content-Type", "application/json; charset=utf-8")
+                    .body(b"{\"errorCode\":\"InternalError\",\"message\":\"handler panic\"}".to_vec())
+            });
         write_response(&mut writer, &resp, keep_alive, is_head)?;
         if !keep_alive {
             return Ok(());
