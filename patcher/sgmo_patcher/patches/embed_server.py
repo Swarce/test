@@ -68,7 +68,8 @@ def apply(ctx: Ctx, rec: PatchRecord) -> None:
     rec.sites.append(SiteRecord("file", dex_name, "applied", None, str(len(boot_bytes)),
                                 "sgm.offline.Boot"))
 
-    # 4. inject the boot call into Application.attachBaseContext (fingerprinted)
+    # 4. inject the boot call into Application.attachBaseContext (fingerprinted; applied with the
+    #    other classes2 edits in one pass by the orchestrator).
     fp = ctx.sites.get("boot_inject", {}).get(f"{_APP_CLASS}->{_ATTACH[0]}{_ATTACH[1]}")
     target_dex = (ctx.sites.get("boot_inject", {})
                   .get(f"{_APP_CLASS}->{_ATTACH[0]}{_ATTACH[1]}_dex", "classes2.dex"))
@@ -77,17 +78,12 @@ def apply(ctx: Ctx, rec: PatchRecord) -> None:
                          "(regenerate sites with tools/make_sites.py).")
     if not ctx.has(target_dex):
         raise PatchError(f"{target_dex} is not in the APK")
-    out, result = dex.dex_inject_call(
-        ctx.entry_bytes(target_dex),
-        cls=_APP_CLASS, name=_ATTACH[0], desc=_ATTACH[1],
-        expect_raw_sha256=fp, invoke=_BOOT_INVOKE, required=True)
-    if out is None:
-        rec.sites.append(SiteRecord("dex-method", f"{_APP_CLASS}->attachBaseContext", "refused",
-                                    fp, result.get("actualRawSha256"), result.get("status")))
-        raise PatchError("could not inject the boot call: Application.attachBaseContext did not "
-                         "match the verified build.")
-    ctx.replace(target_dex, out)
-    rec.sites.append(SiteRecord("dex-method", f"{_APP_CLASS}->attachBaseContext", "applied",
-                                fp, result.get("actualRawSha256"), f"{target_dex}: +Boot.start()"))
+    site = SiteRecord("dex-method", f"{_APP_CLASS}->attachBaseContext", "pending", fp, None,
+                      f"{target_dex}: +Boot.start()")
+    rec.sites.append(site)
+    ctx.add_dex_op(target_dex, {
+        "kind": "inject", "cls": _APP_CLASS, "name": _ATTACH[0], "desc": _ATTACH[1],
+        "expectRawSha256": fp, "invoke": _BOOT_INVOKE,
+    }, site)
     rec.notes.append(f"server in-process on 127.0.0.1:{ctx.config.get('port', 47820)}; "
                      "content read from the APK; saves under /data/data/<pkg>/files/sgm")

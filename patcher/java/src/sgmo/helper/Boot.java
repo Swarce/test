@@ -46,23 +46,39 @@ final class Boot {
     static final String START_INVOKE = "Lsgm/offline/Boot;->start()V";
 
     static byte[] buildDex() throws Exception {
+        return buildDex(java.util.Collections.emptyList());
+    }
+
+    /** Build the Boot dex; {@code fill} fields (PairIP holder statics) are set to "" first. */
+    static byte[] buildDex(List<Pairip.Str> fill) throws Exception {
         Opcodes opcodes = Opcodes.forApi(24);
         DexPool pool = new DexPool(opcodes);
-        pool.internClass(bootClass());
+        pool.internClass(bootClass(fill));
         MemoryDataStore store = new MemoryDataStore();
         pool.writeTo(store);
         return Arrays.copyOf(store.getBuffer(), store.getSize());
     }
 
-    private static ImmutableClassDef bootClass() {
+    private static ImmutableClassDef bootClass(List<Pairip.Str> fill) {
         int pub = AccessFlags.PUBLIC.getValue();
         int stat = AccessFlags.STATIC.getValue();
         int fin = AccessFlags.FINAL.getValue();
         int nat = AccessFlags.NATIVE.getValue();
         int priv = AccessFlags.PRIVATE.getValue();
 
-        // start(): load the library and call nativeStart().
+        // start(): pre-fill PairIP's null string-holder fields with "", then load the server.
         List<ImmutableInstruction> code = new ArrayList<>();
+        if (fill != null && !fill.isEmpty()) {
+            // const-string v0, ""   (once), then one sput-object per holder field
+            code.add(new ImmutableInstruction21c(Opcode.CONST_STRING, 0,
+                    new ImmutableStringReference("")));
+            for (Pairip.Str s : fill) {
+                code.add(new com.android.tools.smali.dexlib2.immutable.instruction.ImmutableInstruction21c(
+                        Opcode.SPUT_OBJECT, 0,
+                        new com.android.tools.smali.dexlib2.immutable.reference.ImmutableFieldReference(
+                                s.cls, s.name, "Ljava/lang/String;")));
+            }
+        }
         // const-string v0, "sgmserver"
         code.add(new ImmutableInstruction21c(Opcode.CONST_STRING, 0,
                 new ImmutableStringReference("sgmserver")));

@@ -21,6 +21,19 @@ class Ctx:
         self.plan = plan            # the mutable output entry map
         self.sites = sites          # the verified-build fingerprints (sites/<versionCode>.json)
         self.config = config        # {"port": int, "force_unverified": bool, ...}
+        # Collected dex-method edits (stubs/injects), grouped by dex and applied in one pass each
+        # by the orchestrator, so every edit's fingerprint is checked against the original dex.
+        self.dex_ops: dict[str, list] = {}
+
+    def add_dex_op(self, dex_name: str, op: dict, site) -> None:
+        """Declare a dex-method edit; the orchestrator applies all of a dex's edits together.
+
+        ``op`` keys: kind ("stub"|"inject"), cls, name, desc, expectRawSha256, and either stub
+        (+superCls) or invoke; ``required`` defaults true. ``site`` is the pending SiteRecord the
+        flush fills in.
+        """
+        op.setdefault("required", True)
+        self.dex_ops.setdefault(dex_name, []).append((op, site))
 
     # -- reading the current bytes of an output entry (base copy or already replaced) ----------
     def entry_bytes(self, name: str) -> bytes:

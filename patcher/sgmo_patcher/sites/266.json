@@ -27,6 +27,28 @@
       "dex": "classes2.dex"
     }
   },
+  "debloat_providers": {
+    "Landroidx/startup/InitializationProvider;->onCreate()Z": {
+      "sha": "e518092ec0c1c2b8d1a9bea8eca070fd94d0aaf8818d6eaba264ca3ad48744da",
+      "dex": "classes2.dex"
+    },
+    "Lcom/google/android/gms/ads/MobileAdsInitProvider;->onCreate()Z": {
+      "sha": "3eee0b08fa052c50ed72b4ae9486257a113bc9ef48c0d11efbba79dff7458729",
+      "dex": "classes3.dex"
+    },
+    "Lcom/google/firebase/provider/FirebaseInitProvider;->onCreate()Z": {
+      "sha": "ba3772bd823c0743e75b8ce7e96a46e1079da9332717a04599905bbd35903c21",
+      "dex": "classes4.dex"
+    },
+    "Lcom/vungle/ads/VungleProvider;->onCreate()Z": {
+      "sha": "56ed64634b916482cb491c56ddd487ccbbbd5447b0c2bb42003e413a256067f5",
+      "dex": "classes4.dex"
+    },
+    "Lio/bidmachine/BidMachineInitProvider;->onCreate()Z": {
+      "sha": "90dd250fc9ef91b87ad829fc8019da3b4ef8e7666e4cb61a99337ea60b1fdc8c",
+      "dex": "classes4.dex"
+    }
+  },
   "boot_inject": {
     "Lcom/pairip/application/Application;->attachBaseContext(Landroid/content/Context;)V": "7c70aaad4bc40c236447bef63914da75c05a3a78ae3ba798cd7dee93e011faa4",
     "Lcom/pairip/application/Application;->attachBaseContext(Landroid/content/Context;)V_dex": "classes2.dex"

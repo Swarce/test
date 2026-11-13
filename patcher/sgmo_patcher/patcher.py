@@ -38,6 +38,36 @@ class PatchOptions:
     min_sdk: int = 24
 
 
+def _flush_dex_ops(ctx) -> None:
+    """Apply every dex's collected edits in a single pass and prove nothing else changed."""
+    from . import dex
+    for dex_name, items in ctx.dex_ops.items():
+        orig = ctx.entry_bytes(dex_name)  # patches declared ops but did not replace, so this is original
+        ops = [op for op, _ in items]
+        out, results = dex.dex_edit(orig, ops)
+        by_key = {r.get("site"): r for r in results}
+        if out is None:
+            for op, site in items:
+                r = by_key.get(f"{op['cls']}->{op['name']}{op['desc']}", {})
+                if r.get("status") in ("mismatch", "missing"):
+                    site.status = "refused"
+                    site.actual = r.get("actualRawSha256")
+            bad = [k for k, r in by_key.items() if r.get("status") in ("mismatch", "missing")]
+            raise PatchError(f"{dex_name}: these sites did not match the verified build: "
+                             + ", ".join(bad))
+        # verify only the edited methods changed
+        excl = [{"cls": op["cls"], "name": op["name"], "desc": op["desc"]} for op in ops]
+        ok, diffs = dex.dex_compare(orig, out, excl)
+        if not ok:
+            raise PatchError(f"{dex_name}: the rewrite changed more than the intended methods: "
+                             + "; ".join(diffs[:5]))
+        ctx.replace(dex_name, out)
+        for op, site in items:
+            r = by_key.get(f"{op['cls']}->{op['name']}{op['desc']}", {})
+            site.status = "applied"
+            site.actual = r.get("actualRawSha256")
+
+
 def _selected(opts: PatchOptions):
     known = set(BY_NAME)
     unknown = [n for n in list(opts.enable) + list(opts.disable) if n not in known]
@@ -102,6 +132,10 @@ def patch(input_paths, out_apk, opts: Optional[PatchOptions] = None, *,
             if not on:
                 continue
             module.apply(ctx, rec)
+
+        # 2b. apply all collected dex-method edits, one pass per dex, so every edit's fingerprint is
+        #     checked against the original dex (chained rewrites would shift untouched methods' bytes).
+        _flush_dex_ops(ctx)
 
         # 3. write the aligned unsigned zip, then sign it.
         deliver = out_apk.parent

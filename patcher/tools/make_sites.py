@@ -32,6 +32,15 @@ _INJECT_KEY = "Lcom/pairip/application/Application;->attachBaseContext(Landroid/
 _BOOTSTRAP_KEYS = {
     "Lcom/pairip/StartupLauncher;->launch()V",
 }
+# SDK auto-init ContentProviders stubbed so their classes (which read PairIP's now-null string
+# fields) never load at boot. onCreate returns true (b04). Telemetry/ads are dropped offline anyway.
+_DEBLOAT_PROVIDER_KEYS = {
+    "Lcom/google/firebase/provider/FirebaseInitProvider;->onCreate()Z",
+    "Lcom/google/android/gms/ads/MobileAdsInitProvider;->onCreate()Z",
+    "Lcom/vungle/ads/VungleProvider;->onCreate()Z",
+    "Lio/bidmachine/BidMachineInitProvider;->onCreate()Z",
+    "Landroidx/startup/InitializationProvider;->onCreate()Z",
+}
 
 
 def _base_apk_bytes(path: str) -> bytes:
@@ -65,6 +74,7 @@ def main(argv) -> int:
 
     gates: dict[str, dict] = {}
     bootstrap: dict[str, dict] = {}
+    debloat: dict[str, dict] = {}
     boot_inject: dict[str, object] = {}
     for n in dex_names:
         for m in dex.dex_methods(base.read(n)):
@@ -73,6 +83,8 @@ def main(argv) -> int:
                 gates[key] = {"sha": m["rawSha256"], "dex": n}
             if key in _BOOTSTRAP_KEYS:
                 bootstrap[key] = {"sha": m["rawSha256"], "dex": n}
+            if key in _DEBLOAT_PROVIDER_KEYS:
+                debloat[key] = {"sha": m["rawSha256"], "dex": n}
             if key == _INJECT_KEY:
                 boot_inject[key] = m["rawSha256"]
                 boot_inject[f"{key}_dex"] = n
@@ -90,6 +102,7 @@ def main(argv) -> int:
         "files": files,
         "pairip_gates": gates,
         "pairip_bootstrap": bootstrap,
+        "debloat_providers": debloat,
         "boot_inject": boot_inject,
     }
     print(json.dumps(out, indent=2))
