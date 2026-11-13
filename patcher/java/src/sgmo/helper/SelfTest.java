@@ -126,7 +126,7 @@ final class SelfTest {
             File misOut = new File(dir, "mis.dex");
             List<Patch.Site> mis = new ArrayList<>();
             mis.add(site(Synth.ACTIVITY, "noSuchMethod", "()V",
-                    null, Patch.Stub.RETURN_VOID, null, false));
+                    "00".repeat(32), Patch.Stub.RETURN_VOID, null, false));
             Map<String, Object> misResult =
                     Patch.run(inDex.getAbsolutePath(), misOut.getAbsolutePath(), mis);
             @SuppressWarnings("unchecked")
@@ -134,9 +134,43 @@ final class SelfTest {
             require("missing".equals(misSites.get(0).get("status")),
                     "unknown method should be 'missing'");
 
+            // A site with no fingerprint is a spec error (the patcher always pins every site).
+            require(throwsIllegalArgument(inDex, dir, site(Synth.ACTIVITY, "onDestroy", "()V",
+                    null, Patch.Stub.RETURN_VOID, null, false)),
+                    "missing expectRawSha256 must be rejected");
+            // A stub that does not fit the method's return type is a spec error.
+            require(throwsIllegalArgument(inDex, dir, site(Synth.ACTIVITY, "getThing",
+                    "()Ljava/lang/Object;", "00".repeat(32), Patch.Stub.RETURN_VOID, null, false)),
+                    "RETURN_VOID on a non-void method must be rejected");
+            // RETURN_NULL on a void method is likewise invalid.
+            require(throwsIllegalArgument(inDex, dir, site(Synth.UNTOUCHED, "plain", "()V",
+                    "00".repeat(32), Patch.Stub.RETURN_NULL, null, false)),
+                    "RETURN_NULL on a void method must be rejected");
+            // SUPER_* on a static method is invalid.
+            require(throwsIllegalArgument(inDex, dir, site(Synth.VMRUNNER, "invoke",
+                    "(Ljava/lang/String;[Ljava/lang/Object;)Ljava/lang/Object;", "00".repeat(32),
+                    Patch.Stub.SUPER_CALL, "Ljava/lang/Object;", false)),
+                    "SUPER_* on a static method must be rejected");
+            log.println("stub-fit and fingerprint-required checks ok");
+
             log.println("selftest OK");
         } finally {
             deleteTree(dir);
+        }
+    }
+
+    /** Run a one-site patch and report whether it was rejected as a spec error. */
+    private static boolean throwsIllegalArgument(File inDex, File dir, Patch.Site site) {
+        File out = new File(dir, "reject-" + site.name + ".dex");
+        List<Patch.Site> sites = new ArrayList<>();
+        sites.add(site);
+        try {
+            Patch.run(inDex.getAbsolutePath(), out.getAbsolutePath(), sites);
+            return false;
+        } catch (IllegalArgumentException e) {
+            return !out.exists();  // nothing written on a rejected spec
+        } catch (Exception e) {
+            return false;
         }
     }
 

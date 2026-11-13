@@ -75,17 +75,18 @@ def keygen(path: Path | None = None, pass_file: Path | None = None) -> Path:
     pf.parent.mkdir(parents=True, exist_ok=True)
 
     password = secrets.token_urlsafe(32)
-    # Write the password file first, locked down, so the keystore is never passworded
-    # without a stored password beside it.
-    pf.write_text(password)
-    os.chmod(pf, stat.S_IRUSR | stat.S_IWUSR)  # 0600
+    # Write the password file first, created 0600 atomically (O_EXCL, no world-readable
+    # window), so the keystore is never passworded without a stored password beside it.
+    _write_secret(pf, password)
 
+    # keytool reads the password from a file (-storepass:file), never the command line, so it is
+    # not exposed in /proc/<pid>/cmdline or `ps` to other local users.
     cmd = [
         _keytool(), "-genkeypair",
         "-keystore", str(ks),
         "-storetype", "PKCS12",
-        "-storepass", password,
-        "-keypass", password,
+        "-storepass:file", str(pf),
+        "-keypass:file", str(pf),
         "-alias", ALIAS,
         "-keyalg", "RSA",
         "-keysize", "4096",
@@ -101,7 +102,22 @@ def keygen(path: Path | None = None, pass_file: Path | None = None) -> Path:
         raise javahelper.HelperError(
             "keytool failed", returncode=proc.returncode,
             stdout=proc.stdout, stderr=proc.stderr)
+    # The keystore itself holds the private key: lock it down too.
+    try:
+        os.chmod(ks, stat.S_IRUSR | stat.S_IWUSR)  # 0600
+    except OSError:
+        pass
     return ks
+
+
+def _write_secret(pf: Path, text: str) -> None:
+    """Create ``pf`` with mode 0600 and write ``text``, failing if it already exists."""
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+    fd = os.open(str(pf), flags, 0o600)
+    try:
+        os.write(fd, text.encode("utf-8"))
+    finally:
+        os.close(fd)
 
 
 def ensure_keystore() -> Path:
@@ -116,14 +132,13 @@ def keystore_cert_sha256(path: Path | None = None, pass_file: Path | None = None
     """SHA-256 (lowercase hex) of the keystore certificate's DER encoding."""
     ks = Path(path) if path else keystore_path()
     pf = Path(pass_file) if pass_file else pass_file_path()
-    password = _read_password(pf)
     with tempfile.TemporaryDirectory() as d:
         der = Path(d) / "cert.der"
         cmd = [
             _keytool(), "-exportcert",
             "-keystore", str(ks),
             "-storetype", "PKCS12",
-            "-storepass", password,
+            "-storepass:file", str(pf),
             "-alias", ALIAS,
             "-file", str(der),
         ]

@@ -5,7 +5,16 @@ import com.android.tools.smali.dexlib2.dexbacked.DexBackedDexFile;
 import com.android.tools.smali.dexlib2.iface.ClassDef;
 import com.android.tools.smali.dexlib2.iface.Field;
 import com.android.tools.smali.dexlib2.iface.Method;
+import com.android.tools.smali.dexlib2.iface.value.BooleanEncodedValue;
+import com.android.tools.smali.dexlib2.iface.value.ByteEncodedValue;
+import com.android.tools.smali.dexlib2.iface.value.CharEncodedValue;
+import com.android.tools.smali.dexlib2.iface.value.DoubleEncodedValue;
 import com.android.tools.smali.dexlib2.iface.value.EncodedValue;
+import com.android.tools.smali.dexlib2.iface.value.FloatEncodedValue;
+import com.android.tools.smali.dexlib2.iface.value.IntEncodedValue;
+import com.android.tools.smali.dexlib2.iface.value.LongEncodedValue;
+import com.android.tools.smali.dexlib2.iface.value.NullEncodedValue;
+import com.android.tools.smali.dexlib2.iface.value.ShortEncodedValue;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -102,12 +111,32 @@ final class Compare {
     private static Map<String, String> fieldMap(Iterable<? extends Field> fields) {
         Map<String, String> m = new LinkedHashMap<>();
         for (Field f : fields) {
+            // A static field with no explicit initial value, and one whose initial value is the
+            // type's default (false/0/0.0/null), are the same thing: dexlib2's DexPool drops
+            // trailing default values when it writes a dex, so the original (DexBacked) may keep
+            // an explicit default that the rewritten copy omits. Normalise both to "default" so
+            // that is not reported as a difference.
             EncodedValue iv = f.getInitialValue();
-            String init = iv == null ? "<none>" : iv.toString();
+            String init = isDefaultInitialValue(iv) ? "default" : iv.toString();
             m.put(f.getName() + ":" + f.getType(),
                   "flags=" + f.getAccessFlags() + " init=" + init);
         }
         return m;
+    }
+
+    /** True for a missing initial value or one equal to its type's default (0/false/0.0/null). */
+    private static boolean isDefaultInitialValue(EncodedValue iv) {
+        if (iv == null) return true;
+        if (iv instanceof BooleanEncodedValue) return !((BooleanEncodedValue) iv).getValue();
+        if (iv instanceof ByteEncodedValue) return ((ByteEncodedValue) iv).getValue() == 0;
+        if (iv instanceof ShortEncodedValue) return ((ShortEncodedValue) iv).getValue() == 0;
+        if (iv instanceof CharEncodedValue) return ((CharEncodedValue) iv).getValue() == 0;
+        if (iv instanceof IntEncodedValue) return ((IntEncodedValue) iv).getValue() == 0;
+        if (iv instanceof LongEncodedValue) return ((LongEncodedValue) iv).getValue() == 0L;
+        if (iv instanceof FloatEncodedValue) return ((FloatEncodedValue) iv).getValue() == 0.0f;
+        if (iv instanceof DoubleEncodedValue) return ((DoubleEncodedValue) iv).getValue() == 0.0;
+        if (iv instanceof NullEncodedValue) return true;
+        return false;
     }
 
     private static void compareMethods(String t, ClassDef x, ClassDef y,

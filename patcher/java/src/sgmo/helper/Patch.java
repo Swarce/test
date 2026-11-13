@@ -75,13 +75,24 @@ final class Patch {
             results.put(key, new SiteResult(s));
         }
 
-        // Find each method, compare the raw fingerprint, and decide its fate.
+        // Every site must carry the verified-build fingerprint: the patcher never rewrites a
+        // method it has not pinned. A missing fingerprint is a spec error, not a site outcome.
+        for (Site s : sites) {
+            if (s.expectRawSha256 == null || s.expectRawSha256.isBlank()) {
+                throw new IllegalArgumentException(
+                        "site " + key(s.cls, s.name, s.desc) + " has no expectRawSha256");
+            }
+        }
+
+        // Find each method (with its owning class), compare the raw fingerprint, decide its fate.
         Map<String, Method> found = new LinkedHashMap<>();
+        Map<String, DexBackedClassDef> ownerOf = new LinkedHashMap<>();
         for (DexBackedClassDef cls : dex.getClasses()) {
             for (Method m : cls.getMethods()) {
                 String key = key(m.getDefiningClass(), m.getName(), descriptorOf(m));
                 if (byKey.containsKey(key)) {
                     found.put(key, m);
+                    ownerOf.put(key, cls);
                 }
             }
         }
@@ -97,6 +108,13 @@ final class Patch {
                 r.actualRawSha256 = null;
                 if (site.required) anyRequiredFailed = true;
                 continue;
+            }
+            // The stub must suit the method, independent of whether the fingerprint matches.
+            // An unsuitable stub would write a dex that fails ART verification at runtime, so
+            // reject it up front as a spec error.
+            String problem = stubFitProblem(site, m, ownerOf.get(key));
+            if (problem != null) {
+                throw new IllegalArgumentException("site " + key + ": " + problem);
             }
             String actual = Dex.rawSha256(m);
             r.actualRawSha256 = actual;
@@ -234,6 +252,40 @@ final class Patch {
             }
             default:
                 throw new IllegalArgumentException("unknown stub " + site.stub);
+        }
+    }
+
+    /**
+     * Check that a stub can legally replace this method. Returns a human-readable problem, or
+     * null if the stub fits. Guards against stubs that would produce a dex ART rejects.
+     */
+    static String stubFitProblem(Site site, Method m, ClassDef owner) {
+        int flags = m.getAccessFlags();
+        if ((flags & AccessFlags.NATIVE.getValue()) != 0) return "method is native (no body to replace)";
+        if ((flags & AccessFlags.ABSTRACT.getValue()) != 0) return "method is abstract (no body to replace)";
+        boolean isStatic = (flags & AccessFlags.STATIC.getValue()) != 0;
+        String ret = m.getReturnType();
+        switch (site.stub) {
+            case RETURN_VOID:
+                if (!"V".equals(ret)) return "RETURN_VOID stub on non-void method (returns " + ret + ")";
+                return null;
+            case RETURN_NULL:
+                if (!(ret.startsWith("L") || ret.startsWith("["))) {
+                    return "RETURN_NULL stub on non-reference return type " + ret;
+                }
+                return null;
+            case SUPER_CALL:
+            case SUPER_CALL_THEN_FINISH:
+                if (isStatic) return "SUPER_* stub on a static method";
+                if (!"V".equals(ret)) return "SUPER_* stub on non-void method (returns " + ret + ")";
+                if (site.superCls == null || site.superCls.isBlank()) return "SUPER_* stub needs superCls";
+                if (owner != null && owner.getSuperclass() != null
+                        && !site.superCls.equals(owner.getSuperclass())) {
+                    return "superCls " + site.superCls + " != actual superclass " + owner.getSuperclass();
+                }
+                return null;
+            default:
+                return "unknown stub " + site.stub;
         }
     }
 
