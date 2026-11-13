@@ -361,6 +361,57 @@ class AxmlDoc:
         assert len(out) == self._orig_len, "axml edit changed the file length"
         return out
 
+    def _subtree_range(self, el: "Element") -> tuple:
+        """The byte range [start, end) of ``el``'s START chunk through its matching END chunk,
+        including any nested children. ``el.offset`` must be a START_ELEMENT chunk."""
+        buf = self._data
+        top_size = _u32(buf, 4)
+        off = el.offset
+        depth = 0
+        while off + _CHUNK_HEADER.size <= top_size:
+            ctype, _chdr, csize = _CHUNK_HEADER.unpack_from(buf, off)
+            if csize < _CHUNK_HEADER.size:
+                raise AxmlError("bad chunk size while scanning a subtree")
+            if ctype == _RES_XML_START_ELEMENT:
+                depth += 1
+            elif ctype == _RES_XML_END_ELEMENT:
+                depth -= 1
+                if depth == 0:
+                    return el.offset, off + csize
+            off += csize
+        raise AxmlError("no matching element end found")
+
+    def remove_elements(self, predicate) -> bytes:
+        """Remove every top-level element for which ``predicate(element)`` is true, with its whole
+        subtree, and return the new (shorter) bytes. The top RES_XML chunk size is reduced to match;
+        the string pool and resource map are left as they are (unused strings simply remain).
+
+        This re-parses internally and does not mutate this instance.
+        """
+        ranges = []
+        for el in self._elements:
+            if predicate(el):
+                ranges.append(self._subtree_range(el))
+        if not ranges:
+            return bytes(self._data)
+        # splice out from the end so earlier offsets stay valid; refuse overlaps.
+        ranges.sort(key=lambda r: r[0], reverse=True)
+        out = bytearray(self._data)
+        removed = 0
+        last_start = len(out) + 1
+        for start, end in ranges:
+            if end > last_start:
+                raise AxmlError("overlapping removal ranges")
+            last_start = start
+            del out[start:end]
+            removed += end - start
+        # shrink the top chunk's total size
+        new_top = _u32(out, 4) - removed
+        struct.pack_into("<I", out, 4, new_top)
+        if new_top != len(out):
+            raise AxmlError(f"size bookkeeping mismatch ({new_top} != {len(out)})")
+        return bytes(out)
+
     def to_xml(self) -> str:
         """A deterministic, indented, one-element-per-line rendering used for diffs."""
         lines = []
