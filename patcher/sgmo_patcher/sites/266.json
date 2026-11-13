@@ -49,6 +49,11 @@
       "dex": "classes4.dex"
     }
   },
+  "native_patches": {
+    "libil2cpp_dt_init": "adeb9ce087e37034c26e74f085ed097524540e2f4331841459aa3ac3cfea12ea",
+    "libunity_dt_init": "774ea46cd05d4f753b7a96f4497fbf3564761e541bf398d5a1970bca49215bae",
+    "libnative_googlesignin_dt_init": "fc24fe39526bf0d270eaf3a936c78a0ddd7800fd35ee954556e250a3b6236e8a"
+  },
   "boot_inject": {
     "Lcom/pairip/application/Application;->attachBaseContext(Landroid/content/Context;)V": "7c70aaad4bc40c236447bef63914da75c05a3a78ae3ba798cd7dee93e011faa4",
     "Lcom/pairip/application/Application;->attachBaseContext(Landroid/content/Context;)V_dex": "classes2.dex"

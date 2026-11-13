@@ -54,6 +54,44 @@ def _base_apk_bytes(path: str) -> bytes:
     raise SystemExit(f"could not find a base APK inside {path}")
 
 
+def _lib_bytes(path: str, lib: str) -> bytes | None:
+    """A ``lib/arm64-v8a/<lib>`` from the base APK or the arm64 split inside an xapk/apks."""
+    entry = f"lib/arm64-v8a/{lib}"
+    data = Path(path).read_bytes()
+    if path.endswith(".apk"):
+        z = zipfile.ZipFile(io.BytesIO(data))
+        return z.read(entry) if entry in z.namelist() else None
+    outer = zipfile.ZipFile(io.BytesIO(data))
+    for n in outer.namelist():
+        if n.endswith(".apk"):
+            inner = zipfile.ZipFile(io.BytesIO(outer.read(n)))
+            if entry in inner.namelist():
+                return inner.read(entry)
+    return None
+
+
+def _native_patches(path: str) -> dict:
+    """Fingerprint the PairIP DT_INIT function (0x40 bytes) of each affected library."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from sgmo_patcher import elf  # noqa: E402
+    libs = {
+        "libil2cpp.so": "libil2cpp_dt_init",
+        "libunity.so": "libunity_dt_init",
+        "libnative-googlesignin.so": "libnative_googlesignin_dt_init",
+    }
+    out: dict = {}
+    for lib, key in libs.items():
+        so = _lib_bytes(path, lib)
+        if so is None:
+            continue
+        e = elf.Elf64(so)
+        off = e.dt_init_offset()
+        if off is None:
+            continue
+        out[key] = hashlib.sha256(so[off:off + 0x40]).hexdigest()
+    return out
+
+
 def main(argv) -> int:
     if len(argv) != 2:
         print(__doc__)
@@ -103,6 +141,7 @@ def main(argv) -> int:
         "pairip_gates": gates,
         "pairip_bootstrap": bootstrap,
         "debloat_providers": debloat,
+        "native_patches": _native_patches(argv[1]),
         "boot_inject": boot_inject,
     }
     print(json.dumps(out, indent=2))

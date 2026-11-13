@@ -2,6 +2,36 @@
 
 Newest build first. Each build: what changed, test counts, a device checklist, what is open.
 
+## Build 06 — native patch: PairIP's per-library integrity DT_INIT
+
+**Device finding (b05):** boot gets much further — our embedded server starts, the window is
+created, and Unity's `libmain.so` loads — then SIGSEGV in `libpairipcore.so` at a *new* offset
+(`0x5ae70`), as the Unity native libraries load; and the app is bounced to the Play Store for
+"license verification" (PairIP's native tamper response). This is the second native entry point the
+research predicted: each of `libil2cpp.so`, `libunity.so` and `libnative-googlesignin.so` carries a
+PairIP-injected `DT_INIT` whose whole body is `ExecuteProgram("<program>")`, run when the library
+loads. On a repackaged APK it crashes / redirects.
+
+**Changed (b06)**
+- `native-patch` (off by default): for each of the three libraries, make `DT_INIT` return
+  immediately — keep the leading `bti c`, write a `ret` right after — so `ExecuteProgram` is never
+  called. The libraries' own `INIT_ARRAY` constructors and `ExecuteProgram` itself are untouched.
+  Each `DT_INIT` is fingerprinted. A minimal stdlib ELF reader (`elf.py`) locates `DT_INIT`.
+- `sites/266.json` gains the three DT_INIT fingerprints.
+- The Play Store "license" redirect shares this native-integrity root (the Java `checkLicense` is
+  already stubbed and `LicenseContentProvider` is not in the manifest), so it should clear too.
+
+**Tests:** 109 patcher tests; apksigner v2+v3; zipalign; all three DT_INITs verified `bti c; ret` in
+the output and the libraries re-parse as valid ELF.
+
+**Device checklist**
+- [ ] Gets past the `libpairipcore.so` crash as Unity loads (no SIGSEGV).
+- [ ] No Play Store "license verification" redirect.
+- [ ] Reaches the main menu; `adb logcat -s sgm-offline` shows the server answering.
+
+**Open:** if a later crash appears inside the game (IL2CPP) rather than PairIP, that's a new class of
+issue; the log will show it.
+
 ## Build 03 — native anti-tamper: experiment 1 (stop the startup VM program)
 
 **Device finding (b02, Galaxy S22 / Android 16):** the app crashes at launch with SIGSEGV
