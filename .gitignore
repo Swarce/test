@@ -1,0 +1,15 @@
+# never commit game files, build outputs, keys or local state
+deliver/
+build/
+content/
+*.apk
+*.xapk
+*.apks
+*.p12
+*.jks
+*.keystore
+__pycache__/
+*.pyc
+
+# local agent worktrees
+.claude/worktrees/

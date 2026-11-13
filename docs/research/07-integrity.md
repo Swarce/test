@@ -1,0 +1,97 @@
+# 07-integrity.md (reviewed) — Skullgirls Mobile 8.12.0 signature / tamper / license / integrity checks
+
+Scope: `com.autumn.skullgirls` 8.12.0, versionCode 266, Unity 2022.3 IL2CPP, arm64-v8a only. Goal: enumerate every integrity/anti-tamper/license check and decide which block offline play on a **re-signed** APK. Evidence from the real files under the scratchpad (`$S/xapk/x/base/classes*.dex`, `$S/xapk/x/arm/lib/arm64-v8a/*.so`, `base-entries.txt`) read with androguard/readelf/capstone/pyelftools. Fingerprints are lowercase hex SHA-256 of `m.get_code().get_bc().get_raw()`. **This revision independently re-ran every patcher-critical check; results in the Review notes at the end.**
+
+## HEADLINE (read this first)
+PairIP is **not** a pure Java wrapper. `libpairipcore.so` is a hard `DT_NEEDED` dependency of `libil2cpp.so`, `libunity.so` and `libnative-googlesignin.so`, all of which import the undefined symbol `ExecuteProgram` from it (verified: `R_AARCH64_JUMP_SLOT` relocations for `ExecuteProgram` in all three). **libpairipcore.so cannot be removed — an unresolved DT_NEEDED/undefined symbol aborts dynamic linking at load.** It also ships 7 `.init_array` constructors that run at native load time (DT_NEEDED), so part of it self-initialises on every launch regardless of the Java side. The Java neutralisation (stub Application / StartupLauncher / SignatureCheck / LicenseClient + the 20 guarded methods) removes the Java signature & license gates — necessary and sufficient to pass the *Java* anti-tamper — but leaves the native component present. Whether the native VM independently rejects a re-signed/repackaged APK could not be determined statically (its bytecode is encrypted) and **must be validated on-device.** This updates `docs/design/patcher.md` risk line "PairIP may have checks we have not found (for example in native code). Expected: none." — expected is **not** none; there is a live native component.
+
+**New in this revision (medium-confidence risk, previously under-flagged):** fully neutralising the Java side removes the *only* `System.loadLibrary("pairipcore")` call (in `VMRunner.<clinit>`). `JNI_OnLoad` is invoked by ART only for the library passed to `System.loadLibrary`, **not** for DT_NEEDED dependencies. So after neutralisation `libpairipcore.so` is still mapped (and its `.init_array` runs) but its `JNI_OnLoad` (6212 bytes, exported) may never be called. If the native `ExecuteProgram` paths that il2cpp/unity call need the `JavaVM*`/state that `JNI_OnLoad` caches, the app could fault at launch — a distinct failure mode from "native VM rejects resign". See §3 and Open Questions. Do **not** treat stubbing `VMRunner.<clinit>` as free/defensive.
+
+## 1. com.pairip.* map and the bootstrap call graph
+
+All PairIP classes live in **classes2.dex**. Security-relevant classes (bodies verified by disassembly):
+
+- `com/pairip/application/Application` (extends `android.app.Application`) — the manifest `android:name` (confirmed in manifest). `<clinit>` → `StartupLauncher.launch()`. `attachBaseContext(ctx)` → `VMRunner.setContext(ctx)`; `SignatureCheck.verifyIntegrity(ctx)`; `LicenseClient.checkLicense(ctx)`; `super.attachBaseContext(ctx)` (exact order verified). No `onCreate` override.
+- `androidx/core/app/CoreComponentFactory` (extends `android.app.AppComponentFactory`) — set as `android:appComponentFactory` (confirmed in manifest). Its injected `<clinit>` also calls `StartupLauncher.launch()`; **its body is byte-identical to `Application.<clinit>` (shared fp `8e19c0ce…`).** It fires before Application, so it is the true first bootstrap — a second, easy-to-miss entry point. (Confirmed accurate.)
+- `com/pairip/StartupLauncher` — `launch()` is `public static synchronized`, guarded by static `launchCalled` (initial value `false`), reads static field `startupProgramName` (**initial value `"p0qYQaLBvlfCguG1"`**, verified as the dex field initializer) and calls `VMRunner.invoke(startupProgramName, null)`.
+- `com/pairip/VMRunner` — `<clinit>` does `System.loadLibrary("pairipcore")`. `executeVM([B,[Object)` is **native**. `invoke(String,[Object)` → `getVmByteCode` → `VmDecryptor.decrypt` → `executeVM` (returns `Object`). `getVmByteCode`/`readByteCode` are the readers of the `assets/<16-char>` blobs.
+- `com/pairip/SignatureCheck` — `verifyIntegrity(ctx)`: SHA-256 of `signatures[0]`, Base64; passes if equal to `verifySignatureMatches()` OR static `expectedTestSignature` OR hardcoded **`"Vn3kj4pUblROi2S+QfRRL9nhsaO2uoHQg6+dpEtxdTE="`** (verified present); else throws `SignatureCheck$SignatureTamperedException("Apk signature is invalid.")` (verified). **The APK-resign gate on the Java side.**
+- `com/pairip/licensecheck/*` — `LicenseClient.checkLicense(ctx)` drives the Google Play LVL path. `LicenseContentProvider.onCreate()` (declared ContentProvider, runs early) **also** calls `checkLicense`; it **returns `boolean`** (`const/4 v0,1; return v0`, verified). `TrialClient`/`TrialStatus` handle trial state.
+
+Confirmed callers (cross-dex): `StartupLauncher.launch` ← `Application.<clinit>` **and** `CoreComponentFactory.<clinit>`; `SignatureCheck.verifyIntegrity` ← only `Application.attachBaseContext`; `LicenseClient.checkLicense` ← `Application.attachBaseContext` + `LicenseContentProvider.onCreate` (+ internal lambda); `VMRunner.invoke` ← the 20 guarded methods + `StartupLauncher.launch`.
+
+Native: `libil2cpp.so`, `libunity.so`, `libnative-googlesignin.so` each list `libpairipcore.so` as `DT_NEEDED` and import undefined `ExecuteProgram` (JUMP_SLOT reloc). `libmain.so` does **not** depend on pairipcore (verified) — it is Unity's own bootstrap (`exports JNI_OnLoad`).
+
+## 2. The 20 guarded methods and all PairIP-entry fingerprints
+
+An independent scan (every method outside `com.pairip` whose body contains exactly one `VMRunner.invoke` call) finds **exactly 20** methods — identical set to the note. Each loads its asset key via `const-string/jumbo` then `invoke-static {name,args}, VMRunner.invoke`. All 20 class names, dexes, asset keys, register/ins sizes and insns SHA-256 in `machine_data_json.guarded` were re-verified and **match**. The 10 entry-point methods (`machine_data_json.pairipEntry`) were likewise re-verified and **match**. Note the only fingerprint collision: `Application.<clinit>` and `CoreComponentFactory.<clinit>` share `8e19c0ce…` — **so the patcher must locate methods by (class, method, descriptor) and use the fingerprint only as a pre-image guard, never as a locator.**
+
+## 3. Proposed stubs (closed set) and offline-start consequences
+
+- **BroadcastReceiver.onReceive (×8:** ProfileInstallReceiver, billing `zzaa`/`zzec`, BoltsMeasurementEventListener, measurement `zzw`, LocalNotifications, Vungle RingerModeReceiver) → **RETURN_VOID.** `onReceive` is abstract (no super). Consequence: `LocalNotifications.onReceive` stops rendering scheduled local notifications — feature loss, not a crash.
+- **Activity.onCreate(Bundle) (×9:** ProxyBillingActivity, ProxyBillingActivityV2, AppLovinFullscreenActivity, applovin testmode `a`, FBUnityChooseGamingContextActivity, SignInHubActivity, HSProactiveNotificationActivity, Vungle AdActivity, bidmachine Mraid/Vast) → **SUPER_CALL_THEN_FINISH.** `super.onCreate(bundle)` is mandatory (`SuperNotCalledException` otherwise). The direct superclasses were re-verified individually: `Landroid/app/Activity;` (ProxyBillingActivity, AppLovinFullscreenActivity, HSProactiveNotificationActivity, Vungle AdActivity), `Landroidx/activity/ComponentActivity;` (ProxyBillingActivityV2), `Lcom/applovin/impl/p3;` (testmode `a`), `Lcom/facebook/unity/BaseActivity;` (FBUnity…), `Landroidx/fragment/app/e;` (SignInHubActivity — obfuscated FragmentActivity), `Lva/b;` (Mraid/Vast). Emit `invoke-super` against the direct super. Not on the core offline path.
+- **Activity.onDestroy() (×2:** ProxyBillingActivity, AppLovinFullscreenActivity) → **SUPER_CALL.**
+- **Worker.doWork() (×1:** DiagnosticsWorker, super `Landroidx/work/Worker;`, returns `Landroidx/work/ListenableWorker$a;`) → **RETURN_NULL.** The closed set has no `Result.success()`; WorkManager tolerates null (logged failure/reschedule). *Medium confidence — WorkManager's null-tolerance is AOSP runtime behavior, not re-verified here; DiagnosticsWorker is off the offline path regardless.*
+
+PairIP entry stubs:
+- `StartupLauncher.launch`→RETURN_VOID (neutralises both `<clinit>` callers; the startup VM program never runs). ✓
+- `SignatureCheck.verifyIntegrity`→RETURN_VOID (kills the resign gate). ✓
+- `LicenseClient.checkLicense`→RETURN_VOID (kills LVL/paywall; covers all callers). ✓
+- `Application.attachBaseContext`→SUPER_CALL (keep only `super.attachBaseContext`; body verified, regs=2/ins=2 so a 2-register `invoke-super` stub fits). ✓
+- `Application.<clinit>` / `CoreComponentFactory.<clinit>`→RETURN_VOID (redundant once `launch` is stubbed). ✓
+- `VMRunner.invoke`→RETURN_NULL (returns `Object`; valid) and `VMRunner.setContext`→RETURN_VOID (defensive). ✓
+- `LicenseContentProvider.onCreate`→**NONE_LEAVE** (returns boolean; do **not** RETURN_VOID; its `checkLicense` call no-ops once `checkLicense` is stubbed). ✓
+- `VMRunner.<clinit>`→RETURN_VOID — **CAUTION (changed from the note's "defensive, redundant").** This removes the `System.loadLibrary("pairipcore")` call. Because nothing else references `VMRunner` after the other stubs, `VMRunner.<clinit>` would likely never execute anyway, so stubbing it changes little — **but either way the Java→`loadLibrary("pairipcore")`→`JNI_OnLoad` path is severed.** pairipcore still maps via DT_NEEDED and runs its `.init_array`, yet its `JNI_OnLoad` may never be called. If the native `ExecuteProgram` sites in il2cpp/unity need `JNI_OnLoad` state, this could fault at launch. **Recommendation: on the first on-device build, do NOT stub `VMRunner.<clinit>` and keep at least one early reference that forces `VMRunner` class-init (e.g. leave `VMRunner.setContext` called from `attachBaseContext`), so `loadLibrary`+`JNI_OnLoad` still run; drop that only if testing shows the native VM doesn't need it.** Treat as an on-device A/B.
+
+**Recommendation stands: stub at the source methods (launch/verifyIntegrity/checkLicense/invoke), not only at Application**, because of the extra `CoreComponentFactory` and `LicenseContentProvider` callers.
+
+## 4. Play Integrity and other integrity
+
+**Java Play Integrity (present, not driven by the app's own dex):** the `com.google.android.play.core.integrity.*` library is bundled, but a dex-wide scan finds **no class outside that library** referencing `StandardIntegrityManager` (39 refs, all in-lib), `requestIntegrityToken` (2, in-lib), or `prepareIntegrityToken` (1, in-lib); `IntegrityManagerFactory` has **no references anywhere** in the dex. So there is no app-dex driver — it is driven from the IL2CPP/C# side. (Confirmed; minor refinement: `IntegrityManagerFactory` is absent rather than merely uncalled.)
+
+**Unity/C# side (global-metadata identifiers):** `Google.Play.Integrity.dll`, `GetIntegrityToken`, `PrepareIntegrityToken`, `InitIntegrity`, etc., plus request/response signing identifiers. (Most `*Signature*` idents are the Skullgirls "Signature Ability" game mechanic; `IsPathRooted` is .NET `System.IO.Path`.) *Carried over from the note; not independently re-dumped this pass — medium confidence.*
+
+**Does a failed integrity token block login against our server? No (good confidence):**
+- `AuthenticateRequest` (`POST authenticate/{platform}/{deviceId}/{region}/{LoginType}`) carries `integrityToken` as a plain body field (confirmed in `reference-server/docs/ENDPOINTS.md` and `PROTOCOL.md`). The reference server's `reference-server/tests/client_sim.py` sends `integrityToken: ''` and login succeeds; the server code contains **no** read of `integrityToken` at all (grep-confirmed). So it is validated server-side only and our server ignores it → not a server-side gate.
+- Offline path is **guest** login (`X-AUTH-USER-TOKEN`/`providerUserToken`, confirmed in PROTOCOL.md), which needs no valid token. Residual risk (medium): a C# `GetIntegrityToken` coroutine that hard-blocks the login UI on token failure — C# in libil2cpp.so, not read here; validate on-device.
+- *Path note:* the server lives at `reference-server/` in the repo (the shared BRIEF's `sgm-server/` name is stale); the note's `reference-server/...` paths are correct.
+
+**Native libraries (all re-verified with readelf):**
+- `libpairipcore.so` — exports exactly `ExecuteProgram`, `JNI_OnLoad`, `JNI_OnUnload`. Imports `__system_property_get/_foreach/_read`, `dlopen`/`dlsym`, `opendir`/`readdir`/`stat`, `openlog`, pthreads — system-property reads + directory scanning, the classic signature of native root/emulator/debugger/hook detection. Confirmed **no** `fopen/open/read/mmap/pread`/AAsset/zip imports → it does not read the encrypted assets itself; callers pass bytecode in. Target is a stock Galaxy S22 on Android 16 (not rooted/emulated), so environment checks should pass — an environment axis, not a resign axis.
+- `ExecuteProgram` call-site counts — **DOWNGRADED to low confidence / unverified.** The note cited libil2cpp=3, libunity=28, libnative-googlesignin=0. I could not reproduce these: these libraries use a non-standard PLT/GOT layout (the `.rela.plt` JUMP_SLOT offsets do not line up with the `.plt` stubs' adrp/ldr GOT pages), and both a PLT-stub counter and a direct-GOT-reference counter returned 0 for all three — i.e. my methods miss the real call mechanism, not that there are zero calls. The JUMP_SLOT relocation existing in all three (googlesignin included) means the symbol is *referenced* in each, so "googlesignin = 0 calls" is **not** something I can confirm. The load-bearing conclusion (pairipcore is used and must stay) rests on DT_NEEDED + the undefined import, which are solid.
+- `libsigner.so` — Adjust SDK request signer (`Java_com_adjust_sdk_sig_NativeLibHelper_nSign`/`nOnResume`, confirmed). Not an app-integrity/login gate.
+- `libntex.so` — graphics plugin (`NEEDED libGLESv2.so`; exports `NativeTexture::Change/Apply/ctor/dtor`; no JNI_OnLoad). Not integrity/anti-cheat. Keep for graphics.
+
+## 5. What becomes dead once PairIP is neutralised — essentially NOTHING is safely removable
+
+- `lib/arm64-v8a/libpairipcore.so` — **KEEP.** Hard DT_NEEDED of il2cpp/unity/googlesignin (re-verified). Removing it fails dynamic linking.
+- `assets/EE9dHUAG90EJYLZv` (name embedded only in libil2cpp.so), `assets/jqJan57rbTuxOKH1` (only in libunity.so), `assets/HhbFJUcQ5t4EfQoo` (only in libnative-googlesignin.so) — **KEEP.** Names verified present (one occurrence each, each only in its own .so); run by the native VM, untouched by Java patching.
+- `assets/6xnuG5vOd5uHPyEF`, `ajLPfVqJZzmVSQkW`, `bFna2BxNayIHbrnf`, `lwJXYm2154xFyLZY` — **KEEP (ambiguous).** No dex const-string / no .so string references them; likely VM sub-programs. Cannot be proven dead.
+- `assets/p0qYQaLBvlfCguG1` (startup) + the 20 guarded-method assets — **DEAD only via the Java path.** The Java reader never runs after stubbing, but a kept native program could invoke any as a sub-program. Deletion not proven safe. All 28 asset entries confirmed present in the base APK. Keep all (~3.3 MB, negligible) unless an on-device A/B proves removal safe.
+
+Net: for b01, treat PairIP neutralisation as **Java-only**; do not strip any native lib or encrypted asset.
+
+## Patcher recommendations (b01)
+1. Rewrite the 10 pairipEntry methods and 20 guarded methods per `machine_data_json`. **Locate each by (class, method, descriptor); verify its pre-image by insns SHA-256 before patching (two entries share a hash, so the hash is a guard, not a locator); re-read after.**
+2. Keep `libpairipcore.so` and **all** `assets/<16-char>` blobs; do not touch any `.so`.
+3. Re-sign with the project key; the Java `SignatureCheck` is stubbed, so resign is fine at the Java layer.
+4. Use **guest** login offline; server ignores `integrityToken`.
+5. For the first build, **prefer keeping the `VMRunner.<clinit>`/`loadLibrary` path intact** (don't stub `<clinit>`, keep an early `VMRunner` reference) so `pairipcore.JNI_OnLoad` still runs; only drop it if on-device testing shows the native VM doesn't need it.
+6. **On-device validation is mandatory** for the two things static analysis cannot settle: (a) whether the native pairipcore VM rejects the re-signed/repackaged APK, and (b) whether severing the Java `loadLibrary` path leaves pairipcore's `JNI_OnLoad` uncalled and the native VM faulting. Capture logcat for `pairip`, `VMRunner`, `SignatureCheck`, `LicenseClient`, and any native abort near the il2cpp/unity `ExecuteProgram` sites.
+
+## Review notes (what I verified and what I changed)
+**Independently re-verified against the real files (all PASS):**
+- All 20 guarded-method fingerprints, classes, dexes, asset keys, and sampled register/ins sizes (androguard; independent VMRunner.invoke-body scan returned exactly 20 — same set).
+- All 10 pairipEntry fingerprints and access flags.
+- Method bodies of `Application.<clinit>`, `Application.attachBaseContext`, `CoreComponentFactory.<clinit>` (byte-identical to Application.<clinit>), `StartupLauncher.launch`, `VMRunner.<clinit>` (loadLibrary pairipcore), `VMRunner.invoke` (returns Object), `LicenseContentProvider.onCreate` (returns boolean).
+- `SignatureCheck` hardcoded constant `Vn3kj4pUblROi2S+QfRRL9nhsaO2uoHQg6+dpEtxdTE=`, `verifySignatureMatches`, `expectedTestSignature`, `SignatureTamperedException("Apk signature is invalid.")`.
+- `startupProgramName` initial value `p0qYQaLBvlfCguG1`; `launchCalled=false`.
+- Direct superclass of all 9 SUPER_CALL_THEN_FINISH activities (each matches the note).
+- Native: DT_NEEDED libpairipcore.so in il2cpp/unity/googlesignin + undefined `ExecuteProgram` (JUMP_SLOT); libmain.so independent; pairipcore exports (ExecuteProgram/JNI_OnLoad/JNI_OnUnload) and import profile (system-property/dir-scan, no file-read/zip/AAsset); native-embedded asset names each only in their own .so; all 28 assets present in base APK; libsigner=Adjust, libntex=graphics.
+- Play Integrity APIs referenced only inside the play library (0 app-dex callers); manifest `android:name` and `appComponentFactory`; server ignores `integrityToken` (no handler read; client_sim sends empty; guest via X-AUTH-USER-TOKEN).
+
+**Changed / downgraded:**
+1. **`ExecuteProgram` call counts (3/28/0): downgraded to low confidence / not reproduced.** Non-standard PLT/GOT; my counters returned 0 for all three, so the method, not the count, is at fault. "googlesignin = 0 calls" cannot be confirmed (a JUMP_SLOT exists for it). Qualitative conclusion unaffected.
+2. **`VMRunner.<clinit>`→RETURN_VOID: added a medium-confidence risk** that the note framed as free/defensive. Severing the only `System.loadLibrary("pairipcore")` call means `JNI_OnLoad` may never run (ART does not call it for DT_NEEDED deps), a distinct launch-fault risk from "native VM rejects resign". Added a recommendation and open question. Confirmed pairipcore has 7 `.init_array` constructors that still run at native load.
+3. **Added:** patcher must locate by (class,method,desc) not fingerprint (two entries collide on `8e19c0ce…`).
+4. **Minor refinements:** `IntegrityManagerFactory` is absent from the dex (not merely uncalled); corrected the server path (`reference-server/`, the note already used it; the BRIEF's `sgm-server/` is stale); flagged the C# Play-Integrity identifier list and WorkManager null-tolerance as carried-over/medium-confidence, not re-verified this pass.
