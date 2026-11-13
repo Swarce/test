@@ -2,6 +2,47 @@
 
 Newest build first. Each build: what changed, test counts, a device checklist, what is open.
 
+## Build 08 (diagnostic) — the near-null build: is a bare re-sign the trigger?
+
+**Device finding (b07diag):** with `global-metadata.dat` **byte-identical** to stock (redirect OFF)
+and DT_INIT left running (native-patch OFF), the app **still** crashed — SIGSEGV (SEGV_ACCERR),
+fault addr `0xb40000795b42e000`, in `libpairipcore.so` at `pc 0x5ae70`, the moment `libmain.so`
+(Unity) loads. **Both** captures are bit-for-bit the same fault (same addr, same registers), so it is
+deterministic, not a race. The read runs off the end of a buffer (`x2=0x5830` reads forward from `x0`
+and faults at the page boundary) — the signature of an integrity hash / decrypt over a region whose
+expected layout no longer matches.
+
+**What b07 ruled out:** the metadata redirect is **not** the trigger (metadata was pristine and it
+still crashed). So the trigger is one of the three things b07diag still changed: the **Java dex stubs**
+(verifyIntegrity / checkLicense / launch, in classes2.dex), the **manifest provider removal**
+(debloat), or the **re-sign** itself.
+
+**b08 isolates the re-sign.** It is the *near-null* build — `merge-splits` + re-sign and **nothing
+else**. Verified before shipping: every `classes*.dex` byte-identical to stock, `global-metadata.dat`
+byte-identical, `libpairipcore.so` untouched, signed v2+v3 with the same key as b07 (installs over it).
+The only deltas from the stock game are the signing key and the zip repack from merging the arm64
+split into base. Outcomes, all decisive:
+- **Native crash in `libpairipcore.so`** (at `0x37b0c` startup, or `0x5ae70` on Unity load) → PairIP's
+  native VM validates the **signing certificate / APK layout**. We can never reproduce the original
+  Autumn Games signature, so **no in-APK patch can pass** — the embedded-server-in-APK architecture is
+  blocked without either a one-time **rooted dump** of the decrypted libraries (then strip PairIP) or a
+  pivot to leaving the APK **pristine** and redirecting the network off-device. This is the likely
+  outcome: signature verification is PairIP's core purpose, and b06 showed the native code is
+  *decrypted* at load with a key plausibly tied to integrity/signature state.
+- **Java-level license failure / Play-Store bounce, no native crash** → the native layer *tolerates* a
+  re-sign; only the Java gates + our content edits matter → in-APK patching is alive; stub the Java
+  gates and keep edits surgical.
+- **Boots to the menu (online)** → the native layer tolerates everything we did → the blocker was one
+  specific content edit, and we bisect it.
+
+**Device checklist**
+- [ ] Install b08 over the current install (same key, no uninstall) and launch.
+- [ ] Capture `adb logcat -d > b08.log` — crash or not, the tombstone (which `.so`, which offset) is
+      the result.
+
+**Open:** this build confirms or kills the in-APK path. If it crashes, the next step is a direction
+decision (rooted dump vs. pristine-APK off-device redirect), not another patch.
+
 ## Build 07 (diagnostic) — isolate what PairIP's DT_INIT checks
 
 **Device finding (b06):** the DT_INIT patch removed the `libpairipcore.so` crash, but the app then
