@@ -30,6 +30,17 @@ fn main() {
             }
         }
     }
+    let addr = format!("{host}:{port}");
+    // --apk <path> exercises the embedded host's content-from-APK path (for parity testing on a PC).
+    let apk = arg(&args, "--apk", "");
+    if !apk.is_empty() {
+        eprintln!("sgm-standalone (embedded mode) on http://{addr} (apk={apk}, db={db})");
+        if let Err(e) = sgm_core::run_embedded(&apk, &db, &addr, config) {
+            eprintln!("serve failed: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
     let app = match App::build(&content, &db, config) {
         Ok(a) => a,
         Err(e) => {
@@ -37,7 +48,6 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let addr = format!("{host}:{port}");
     eprintln!("sgm-standalone listening on http://{addr} (content={content}, db={db})");
     let handler: Arc<dyn http::Handler> = Arc::new(app);
     if let Err(e) = http::serve(&addr, handler) {
