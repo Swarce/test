@@ -228,19 +228,29 @@ class SignVerifyTests(unittest.TestCase):
         self.assertRegex(cert, r"^[0-9a-f]{64}$")
 
         apk = self._synthetic_apk()
-        out = self._dir / "signed.apk"
-        result = sign.sign(apk, out)
-        self.assertEqual(result["certSha256"], cert)
-        self.assertEqual(result["schemes"], ["v1", "v2", "v3"])
 
-        # At min-sdk 21 all three schemes verify (v1 JAR signing counts below API 24).
-        v = sign.verify(out, min_sdk=21)
-        self.assertTrue(v["verified"])
-        self.assertTrue(v["v1"] and v["v2"] and v["v3"], v)
-        self.assertIn(cert, v["certSha256"])
+        # Below API 24, v1 (JAR) signing is added and all three schemes verify.
+        out21 = self._dir / "signed21.apk"
+        r21 = sign.sign(apk, out21, min_sdk=21)
+        self.assertEqual(r21["certSha256"], cert)
+        self.assertEqual(r21["schemes"], ["v1", "v2", "v3"])
+        v21 = sign.verify(out21, min_sdk=21)
+        self.assertTrue(v21["verified"])
+        self.assertTrue(v21["v1"] and v21["v2"] and v21["v3"], v21)
+        self.assertIn(cert, v21["certSha256"])
+
+        # At min-sdk 24 (the target), v2+v3 only: no v1, and the reported schemes match.
+        out24 = self._dir / "signed24.apk"
+        r24 = sign.sign(apk, out24, min_sdk=24)
+        self.assertEqual(r24["schemes"], ["v2", "v3"])
+        v24 = sign.verify(out24, min_sdk=24)
+        self.assertTrue(v24["verified"])
+        self.assertFalse(v24["v1"])
+        self.assertTrue(v24["v2"] and v24["v3"], v24)
+        self.assertNotIn("META-INF/SGM-OFFL.SF", set(zipfile.ZipFile(out24).namelist()))
 
         # Stored entries are aligned by apksig: 4 bytes, and .so to 16 KiB.
-        self._assert_alignment(out)
+        self._assert_alignment(out24)
 
     def _assert_alignment(self, apk: Path):
         import struct

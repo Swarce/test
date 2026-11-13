@@ -89,7 +89,23 @@ def apply(ctx: Ctx, rec: PatchRecord) -> None:
     if len(out) != len(data):
         raise PatchError("manifest edit changed the file length; refusing (in-place edits only).")
     if changed:
+        # Decode the result and diff it against the input: the only lines that may differ are the
+        # ones we meant to change. This mirrors metadata.compare()/dex_compare() for the manifest.
+        before_xml = axml.AxmlDoc.parse(data).to_xml().splitlines()
+        after_xml = axml.AxmlDoc.parse(out).to_xml().splitlines()
+        diff_lines = [l for l in _unified(before_xml, after_xml) if l[:1] in ("+", "-")
+                      and not l.startswith(("+++", "---"))]
+        allowed = ("requiredSplitTypes", "com.android.vending.splits.required", "splits.required")
+        unexpected = [l for l in diff_lines if not any(a in l for a in allowed)]
+        if unexpected:
+            raise PatchError("manifest edit changed more than the split attributes: "
+                             + "; ".join(unexpected[:4]))
         ctx.replace(man_name, out)
     rec.notes.append(f"manifest edits: {', '.join(changed) if changed else 'none needed'}")
+
+
+def _unified(a, b):
+    import difflib
+    return difflib.unified_diff(a, b, lineterm="")
 
     # 3. (the split APK itself is simply not added; only its lib/ entries were copied.)

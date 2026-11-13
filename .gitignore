@@ -13,3 +13,5 @@ __pycache__/
 
 # local agent worktrees
 .claude/worktrees/
+*.report.json
+*.report.txt

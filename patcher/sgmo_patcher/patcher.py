@@ -37,6 +37,11 @@ class PatchOptions:
 
 
 def _selected(opts: PatchOptions):
+    known = set(BY_NAME)
+    unknown = [n for n in list(opts.enable) + list(opts.disable) if n not in known]
+    if unknown:
+        raise PatchError(f"unknown patch name(s): {', '.join(unknown)}. "
+                         f"Known patches: {', '.join(sorted(known))}.")
     out = []
     for m in ALL_PATCHES:
         on = m.DEFAULT_ON
