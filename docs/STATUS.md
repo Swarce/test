@@ -17,12 +17,17 @@ against the reference server over `adb reverse`.
   (Java-only: `SignatureCheck.verifyIntegrity` and `LicenseClient.checkLicense` → return-void).
 - Research notes 01/07/09; design doc; docs set; `scripts/build.sh`.
 
-**Tests** (filled as the build completes)
-- patcher: unit + real-binary (`SGMO_APK`) — see the PR.
-- reference server end-to-end: 10/10 against content extracted from the 8.12.0 copy.
-- Java helper self-test: OK.
-- Dex fingerprints match androguard on all 190,812 base-dex methods; a no-op dex rewrite of every
-  base dex compares equal.
+**Tests** (`scripts/build.sh`, all green)
+- patcher: **104** tests. Without `SGMO_APK`: 21 real-binary tests skip. With it (and the venv's
+  androguard): all 104 pass.
+- reference server end-to-end: **10/10** against content extracted from the 8.12.0 copy.
+- Java helper self-test: OK (stubs, dex-compare, required-mismatch, stub-fit, fingerprint-required).
+- Dex `rawSha256` matches androguard on all **190,812** base-dex methods; a no-op `DexPool` rewrite of
+  every base dex compares equal.
+- **End-to-end on the real copy:** the patched APK passes Google `apksigner` (v2+v3) and
+  `zipalign -P 16`; the game-API literal reads `http://127.0.0.1:47820` and the CDN literal is
+  unchanged; `manifest@requiredSplitTypes` is cleared; **classes2.dex differs from the input only in
+  the two stubbed PairIP gates and every other dex is byte-identical.**
 
 **Device checklist (Galaxy S22, Android 16) — to be confirmed on a device**
 - [ ] Patched APK installs over an uninstalled Play copy.
