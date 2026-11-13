@@ -82,3 +82,50 @@ def make_test_dex() -> bytes:
         out = Path(d) / "test.dex"
         javahelper.run(["make-test-dex", str(out)])
         return out.read_bytes()
+
+
+def dex_inject_call(dex_bytes: bytes, *, cls: str, name: str, desc: str,
+                    expect_raw_sha256: str | None, invoke: str,
+                    required: bool = True) -> tuple[bytes | None, dict]:
+    """Prepend ``invoke-static {}, <invoke>`` to one fingerprinted method.
+
+    ``invoke`` is ``"Lowner;->method()V"`` (a void, zero-argument static). Returns
+    ``(out_bytes, result)``; ``out_bytes`` is None if a required site mismatched/was missing.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        in_dex = Path(d) / "in.dex"
+        out_dex = Path(d) / "out.dex"
+        spec = Path(d) / "spec.json"
+        in_dex.write_bytes(dex_bytes)
+        spec.write_text(json.dumps({
+            "cls": cls, "name": name, "desc": desc,
+            "expectRawSha256": expect_raw_sha256, "invoke": invoke, "required": required,
+        }))
+        result = javahelper.run(["dex-inject-call", str(in_dex), str(out_dex), str(spec)],
+                                allowed_returncodes=(0, 2))
+        parsed = result.json()
+        if result.returncode == 2 or parsed.get("status") in ("mismatch", "missing") or not out_dex.exists():
+            return None, parsed
+        return out_dex.read_bytes(), parsed
+
+
+def dex_edit(dex_bytes: bytes, ops) -> tuple[bytes | None, list[dict]]:
+    """Apply several method edits (stubs and leading-call injections) to one dex in a single pass.
+
+    ``ops`` is a list of dicts: ``{kind: "stub"|"inject", cls, name, desc, expectRawSha256,
+    stub?, superCls?, invoke?, required?}``. Fingerprints are checked against the input dex before
+    anything is written. Returns ``(out_bytes, results)``; ``out_bytes`` is None if a required site
+    mismatched or was missing.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        in_dex = Path(d) / "in.dex"
+        out_dex = Path(d) / "out.dex"
+        spec = Path(d) / "spec.json"
+        in_dex.write_bytes(dex_bytes)
+        spec.write_text(json.dumps({"ops": list(ops)}))
+        result = javahelper.run(["dex-edit", str(in_dex), str(out_dex), str(spec)],
+                                allowed_returncodes=(0, 2))
+        parsed = result.json()
+        if not parsed.get("ok") or not out_dex.exists():
+            return None, parsed.get("sites", [])
+        return out_dex.read_bytes(), parsed.get("sites", [])

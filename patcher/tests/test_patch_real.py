@@ -105,3 +105,63 @@ class PatchRealTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(APK and os.path.exists(APK), "SGMO_APK not set")
+@unittest.skipUnless(_have_java(), "no JDK on PATH")
+@unittest.skipUnless(os.environ.get("SGMO_SERVER_SO") and os.path.exists(os.environ.get("SGMO_SERVER_SO", "")),
+                     "SGMO_SERVER_SO (built libsgmserver.so) not set")
+@unittest.skipUnless(os.environ.get("SGMO_CONTENT_JSON") and os.path.exists(os.environ.get("SGMO_CONTENT_JSON", "")),
+                     "SGMO_CONTENT_JSON (combined content) not set")
+class EmbedServerRealTest(unittest.TestCase):
+    """Patch with embed-server and check the APK is self-contained (server + content + bootstrap)."""
+
+    @classmethod
+    def setUpClass(cls):
+        from sgmo_patcher import patcher, sign
+        cls.tmp = tempfile.mkdtemp()
+        ks = Path(cls.tmp) / "k.p12"
+        pf = Path(cls.tmp) / "k.pass"
+        sign.keygen(ks, pf)
+        cls.out = Path(cls.tmp) / "embed.apk"
+        cls.report = patcher.patch([APK], cls.out, patcher.PatchOptions(
+            port=47820, enable=["embed-server"], keystore=ks, pass_file=pf,
+            server_so=os.environ["SGMO_SERVER_SO"], content_json=os.environ["SGMO_CONTENT_JSON"]))
+
+    @classmethod
+    def tearDownClass(cls):
+        import shutil
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_ok_and_signed(self):
+        from sgmo_patcher import sign, zipio
+        self.assertTrue(self.report.ok, self.report.to_text())
+        self.assertTrue(sign.verify(self.out)["verified"])
+        self.assertEqual(zipio.verify_alignment(self.out), [])
+
+    def test_self_contained(self):
+        z = zipfile.ZipFile(self.out)
+        names = set(z.namelist())
+        self.assertIn("lib/arm64-v8a/libsgmserver.so", names)
+        # content must be STORED so the embedded server can read it in place
+        info = z.getinfo("assets/sgm-content.json")
+        self.assertEqual(info.compress_type, zipfile.ZIP_STORED)
+        self.assertTrue(any(n.startswith("classes") and n.endswith(".dex") for n in names))
+
+    def test_boot_call_injected_once(self):
+        from sgmo_patcher import dex, inputs, axml
+        with inputs.load([APK], manifest_reader=axml.manifest_info) as apk:
+            orig = apk.base.read("classes2.dex")
+        z = zipfile.ZipFile(self.out)
+        patched = z.read("classes2.dex")
+        # only Application.attachBaseContext changed, nothing else in classes2.dex
+        ok, diffs = dex.dex_compare(orig, patched, [
+            {"cls": "Lcom/pairip/application/Application;", "name": "attachBaseContext",
+             "desc": "(Landroid/content/Context;)V"},
+            # pairip-neutralize also runs by default — exclude its two gates too
+            {"cls": "Lcom/pairip/SignatureCheck;", "name": "verifyIntegrity",
+             "desc": "(Landroid/content/Context;)V"},
+            {"cls": "Lcom/pairip/licensecheck/LicenseClient;", "name": "checkLicense",
+             "desc": "(Landroid/content/Context;)V"},
+        ])
+        self.assertTrue(ok, f"unexpected classes2.dex changes: {diffs[:3]}")

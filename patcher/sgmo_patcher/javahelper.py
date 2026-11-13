@@ -273,3 +273,13 @@ if __name__ == "__main__":  # pragma: no cover - manual use
     sys.stdout.write(result.stdout)
     sys.stderr.write(result.stderr)
     sys.exit(result.returncode)
+
+
+def make_boot_dex() -> bytes:
+    """Return the dex for sgm.offline.Boot (loadLibrary + nativeStart)."""
+    import tempfile
+    from pathlib import Path as _P
+    with tempfile.TemporaryDirectory() as d:
+        out = _P(d) / "boot.dex"
+        run(["make-boot-dex", str(out)])
+        return out.read_bytes()

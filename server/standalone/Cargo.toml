@@ -1,0 +1,12 @@
+[package]
+name = "sgm-standalone"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sgm-core = { path = "../core" }
+serde_json = { workspace = true }
+
+[[bin]]
+name = "sgm-standalone"
+path = "src/main.rs"

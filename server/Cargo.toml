@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = ["core", "standalone", "embedded"]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+rust-version = "1.75"
+
+[workspace.dependencies]
+serde_json = "1.0.140"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+# unwind (not abort): the embedded server runs in the game's own process, so a panic in one request
+# handler must not take down the game. The HTTP layer catches per-request panics and returns 500.
+panic = "unwind"
+strip = true

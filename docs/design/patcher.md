@@ -8,7 +8,8 @@ Turn the player's own copy of Skullgirls Mobile 8.12.0 (an XAPK, an `.apks`, a f
 `base.apk` plus split APKs pulled from a phone) into **one** installable, re-signed APK in which:
 
 - the game API base URL points to `http://127.0.0.1:<port>` (default 47820);
-- Google PairIP (the Play anti-tamper and license wrapper) no longer runs;
+- Google PairIP's Java signature and license gates no longer run (its native VM is left intact — see
+  "PairIP is native" below);
 - the ABI split is merged into the base, so a plain `adb install` works;
 - every change is fingerprinted against the verified build, switchable, and listed in a patch report.
 

@@ -33,7 +33,8 @@
 ## Later / open questions
 
 - Does the PairIP **native** VM reject a re-signed/repackaged APK? (b01 device run answers this.)
-- If it does: patch the native integrity check or the `DT_INIT`/`DT_NEEDED` path (a native patch,
-  new fingerprinting).
+- **Decision (owner):** if b01 crashes at launch from the native check, b02 goes **straight to
+  native patching** (the PairIP integrity path in `libpairipcore.so` / `libil2cpp`'s `DT_INIT`
+  → `ExecuteProgram`), not the Java `pairip-bootstrap-stubs` first. New native fingerprinting needed.
 - CDN redirect and a local asset store (import from the player's installed copy).
 - Rift/prize fights and raid/maze against generated rivals — per-mode decision.

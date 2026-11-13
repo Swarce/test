@@ -2,6 +2,147 @@
 
 Newest build first. Each build: what changed, test counts, a device checklist, what is open.
 
+## Build 08 (diagnostic) — RESULT: a bare re-sign is the trigger. In-APK patching is blocked.
+
+**Device finding (b08):** the near-null build — stock bytes, `merge-splits` + re-sign and nothing
+else — **crashed in `libpairipcore.so` at `pc 0x37b0c`** (the startup program, same offset as b02),
+firing the instant libpairipcore loads from classes2.dex, **before any Unity library loads**. Fault
+addr `0xb40000795b3ac000`, a read off the end of a buffer (`x1=0x41cac`, `x2=0x41cad` = length+1).
+
+Because every `classes*.dex`, `global-metadata.dat` and every `.so` in b08 was verified
+**byte-identical to stock**, the only changes from the Play build were the **signing key** and the zip
+repack. Therefore: **PairIP's native startup VM validates the APK signing certificate, and re-signing
+alone trips it at launch.** Any modification requires re-signing, so the "server inside the APK"
+architecture — and every in-APK patch — cannot pass PairIP. Confirmed, not inferred.
+
+**This closes the in-APK path.** The two remaining ways to reach the offline goal:
+- **A — Pristine APK + off-device redirect (no root):** never modify the game; redirect its API
+  traffic to the local server with a VPNService companion app. Linchpin: the API is **HTTPS**
+  (`skgm-prod-game-api.skullgirlsmobile.com`), so it hinges on whether the stock app trusts an
+  interception CA (networkSecurityConfig / pinning) — under investigation from the extracted APK.
+- **B — One-time rooted dump:** root the S22 once, dump the decrypted libil2cpp/libunity, strip PairIP
+  entirely, rebuild a clean APK that re-signs freely → the embedded-server design then works. Costs a
+  Knox-tripping root.
+
+The patcher, the Rust server (standalone + embedded), the content pipeline and all tests remain valid
+and are reused unchanged by whichever path is chosen; only the *delivery* changes.
+
+## Build 07 (diagnostic) — isolate what PairIP's DT_INIT checks
+
+**Device finding (b06):** the DT_INIT patch removed the `libpairipcore.so` crash, but the app then
+died with **SIGILL** deep in `libunity.so` during `call_constructors` (the `INIT_ARRAY`), reached via
+`UnityPlayer.loadNative`. Static analysis of the crash site showed the bytes there are **encrypted**
+(not valid code, not zero). So PairIP's DT_INIT `ExecuteProgram` **decrypts selected functions** at
+load — it is not integrity-only — and neutralising it leaves those functions encrypted, so the first
+call into one executes garbage (SIGILL). **Conclusion: DT_INIT cannot be skipped; it must run.** In
+b05 (DT_INIT running) it crashed *during* its work because our changes fail its check.
+
+**b07 is a diagnostic, not a fix.** It keeps `global-metadata.dat` byte-identical to the original (no
+`redirect-api`) and lets DT_INIT run (no `native-patch`), with the dex stubs, provider removal and
+re-sign still in place. The result tells us what DT_INIT checks:
+- **Boots / past the `libunity` SIGILL** → DT_INIT tolerates the dex/manifest/signature changes, and
+  the metadata redirect was the trigger → redirect a different way (a native `connect()`/`getaddrinfo`
+  hook in the embedded server, metadata left pristine).
+- **Crashes again in `libpairipcore.so`** → DT_INIT checks the dex, manifest or the signature; the
+  signature is re-signed and can't match, so that path needs either decrypted-library dumping (root)
+  or patching the native signature comparison.
+
+`native-patch` is now documented as decryption-breaking and is not in the default flow.
+
+## Build 06 — native patch: PairIP's per-library integrity DT_INIT
+
+**Device finding (b05):** boot gets much further — our embedded server starts, the window is
+created, and Unity's `libmain.so` loads — then SIGSEGV in `libpairipcore.so` at a *new* offset
+(`0x5ae70`), as the Unity native libraries load; and the app is bounced to the Play Store for
+"license verification" (PairIP's native tamper response). This is the second native entry point the
+research predicted: each of `libil2cpp.so`, `libunity.so` and `libnative-googlesignin.so` carries a
+PairIP-injected `DT_INIT` whose whole body is `ExecuteProgram("<program>")`, run when the library
+loads. On a repackaged APK it crashes / redirects.
+
+**Changed (b06)**
+- `native-patch` (off by default): for each of the three libraries, make `DT_INIT` return
+  immediately — keep the leading `bti c`, write a `ret` right after — so `ExecuteProgram` is never
+  called. The libraries' own `INIT_ARRAY` constructors and `ExecuteProgram` itself are untouched.
+  Each `DT_INIT` is fingerprinted. A minimal stdlib ELF reader (`elf.py`) locates `DT_INIT`.
+- `sites/266.json` gains the three DT_INIT fingerprints.
+- The Play Store "license" redirect shares this native-integrity root (the Java `checkLicense` is
+  already stubbed and `LicenseContentProvider` is not in the manifest), so it should clear too.
+
+**Tests:** 109 patcher tests; apksigner v2+v3; zipalign; all three DT_INITs verified `bti c; ret` in
+the output and the libraries re-parse as valid ELF.
+
+**Device checklist**
+- [ ] Gets past the `libpairipcore.so` crash as Unity loads (no SIGSEGV).
+- [ ] No Play Store "license verification" redirect.
+- [ ] Reaches the main menu; `adb logcat -s sgm-offline` shows the server answering.
+
+**Open:** if a later crash appears inside the game (IL2CPP) rather than PairIP, that's a new class of
+issue; the log will show it.
+
+## Build 03 — native anti-tamper: experiment 1 (stop the startup VM program)
+
+**Device finding (b02, Galaxy S22 / Android 16):** the app crashes at launch with SIGSEGV
+(SEGV_ACCERR) **inside `libpairipcore.so`** (`pc 0x37b0c`), ~2 s in, right after the library loads
+from `classes2.dex`, and loops. This is PairIP's native startup integrity program detecting the
+repackage (re-sign + modified `classes2.dex`/metadata) — the open question from b01/b02, now
+answered. It happens in `…CoreComponentFactory.<clinit> → StartupLauncher.launch()`, **before** our
+`Boot` hook, so the embedded server never ran. The same check would stop b01 too.
+
+**Changed (b03)**
+- `pairip-bootstrap-stubs` patch (off by default): stub `StartupLauncher.launch()` → return-void, so
+  PairIP's startup VM program never runs. Fingerprinted; `libpairipcore.so` and the encrypted assets
+  are untouched. `sites/266.json` gains the `launch()` fingerprint.
+
+**Experiment:** b03 = b02 + `pairip-bootstrap-stubs`. Two possible outcomes on-device: (a) it boots
+further / to the menu (the startup program was the only early anti-tamper), or (b) it crashes later
+in `libil2cpp.so`'s `DT_INIT` (a second native program `ExecuteProgram("EE9dHUAG90EJYLZv")`), which
+would need a native patch — the next step per the owner's decision.
+
+**Device checklist**
+- [ ] App gets past the `libpairipcore.so` startup crash.
+- [ ] If it crashes, capture the new tombstone: is it still `libpairipcore.so`, or now `libil2cpp.so`?
+- [ ] `adb logcat -s sgm-offline` — does the embedded server start now?
+
+
+## Build 02 — the embedded server (no PC needed)
+
+**Goal:** run the offline server inside the game's own process, so the patched APK reaches the main
+menu with no network and no PC.
+
+**Changed**
+- `server/`: a Rust workspace porting `reference-server` — `core` (protocol, a std-only HTTP server,
+  content loader, float32 game math, the player document + serialization, loot, file storage,
+  routing, the login/startup handlers), `standalone` (the PC binary + the parity oracle harness),
+  and `embedded` (`libsgmserver.so`).
+- Embedded host: a JNI `nativeStart` derives the APK path and a writable data dir from `/proc`, reads
+  the bundled content straight out of the APK, and serves `127.0.0.1:47820` from a background thread.
+- Patcher `embed-server` patch: bundles `libsgmserver.so`, `assets/sgm-content.json` (stored), a
+  `Boot` dex, and injects `Boot.start()` at the top of `Application.attachBaseContext` (fingerprinted).
+- Java helper: `make-boot-dex` and `dex-inject-call`. Content extractor: `--combined`.
+- Docs: `docs/design/embedded-server.md`.
+
+**Tests**
+- Rust core: `cargo build` (host + aarch64-linux-android), unit tests, and the Python conformance
+  suite's login/startup/session/unknown/signature tests pass against the Rust standalone **and**
+  against content read from a stored APK entry.
+- Patcher: 107 tests. The `embed-server` end-to-end test patches the real copy and checks the APK is
+  self-contained (server `.so`, stored content, Boot dex, the injected call), signs (v2+v3), aligns,
+  and that `classes2.dex` changed only in the injected method and the two PairIP gates.
+
+**Device checklist (Galaxy S22, Android 16) — to be confirmed on a device**
+- [ ] Patched APK installs over an uninstalled Play copy.
+- [ ] App launches (PairIP's native VM does not reject the re-signed APK).
+- [ ] `adb logcat -s sgm-offline` shows the server starting (apk/data/port).
+- [ ] Guest login reaches the main menu **with the phone in airplane mode** (no PC, no network).
+- [ ] One story fight is attempted (full fight logic is M3; the menu is the b02 goal).
+
+**Open**
+- The PairIP native-boot question is still the gate (same as b01).
+- Action endpoints (fights, events, store, progression, challenges) return empty shapes; the full
+  handler port is M3+.
+- Content is bundled stored (~30 MB) and held in memory; optimisation is deferred.
+
+
 ## Build 01 — patcher foundations and the first patched APK
 
 **Goal:** turn the player's own 8.12.0 copy into one merged, re-signed APK whose game API points at

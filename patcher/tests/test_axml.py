@@ -236,3 +236,43 @@ class RealApkAxmlTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RemoveElementsRealTest(unittest.TestCase):
+    """Remove <provider> elements from the real manifest and check it stays valid (needs SGMO_APK)."""
+
+    def setUp(self):
+        import os, zipfile
+        apk = os.environ.get("SGMO_APK")
+        if not apk or not os.path.exists(apk):
+            self.skipTest("SGMO_APK not set")
+        z = zipfile.ZipFile(apk)
+        base = [n for n in z.namelist() if n.endswith(".apk") and "config" not in n]
+        import io
+        inner = zipfile.ZipFile(io.BytesIO(z.read(base[0]))) if base else z
+        self.man = inner.read("AndroidManifest.xml")
+
+    def test_remove_one_provider_shrinks_and_reparses(self):
+        from sgmo_patcher import axml
+        doc = axml.AxmlDoc.parse(self.man)
+        provs = [e for e in doc.elements() if e.name == "provider"]
+        self.assertTrue(provs, "expected providers in the manifest")
+        target = doc.attr(provs[0], "name").value
+        out = doc.remove_elements(
+            lambda el: el.name == "provider" and doc.attr(el, "name")
+            and doc.attr(el, "name").value == target)
+        self.assertLess(len(out), len(self.man))
+        after = axml.AxmlDoc.parse(out)
+        names = {after.attr(e, "name").value for e in after.elements()
+                 if e.name == "provider" and after.attr(e, "name")}
+        self.assertNotIn(target, names)
+        # package and app class unchanged
+        info = axml.manifest_info(out)
+        self.assertEqual(info["package"], "com.autumn.skullgirls")
+        self.assertEqual(info["versionCode"], 266)
+
+    def test_remove_nothing_is_identity(self):
+        from sgmo_patcher import axml
+        doc = axml.AxmlDoc.parse(self.man)
+        out = doc.remove_elements(lambda el: False)
+        self.assertEqual(out, self.man)

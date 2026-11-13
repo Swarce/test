@@ -21,24 +21,34 @@ from .patches import ALL as ALL_PATCHES
 
 
 def _cmd_keygen(a) -> int:
-    ks = sign.keystore_path() if not a.keystore else Path(a.keystore)
+    if a.keystore:
+        ks = Path(a.keystore)
+        pf = ks.with_suffix(".pass")          # password beside the chosen keystore, not the default
+    else:
+        ks, pf = sign.keystore_path(), sign.pass_file_path()
     if ks.exists():
         print(f"keystore already exists: {ks}")
         return 0
-    path = sign.keygen(ks)
+    path = sign.keygen(ks, pf)
     print(f"created signing key: {path}")
-    print(f"password file:       {sign.pass_file_path() if not a.keystore else '(alongside)'}")
+    print(f"password file:       {pf}")
     print("keep these; every build uses them so new APKs install over the old one.")
     return 0
 
 
 def _cmd_patch(a) -> int:
+    keystore = Path(a.keystore) if a.keystore else None
+    pass_file = Path(a.pass_file) if a.pass_file else (
+        keystore.with_suffix(".pass") if keystore else None)
     opts = PatchOptions(
         port=a.port,
         enable=a.enable or [],
         disable=a.disable or [],
         force_unverified=a.force_unverified,
-        keystore=Path(a.keystore) if a.keystore else None,
+        server_so=a.server_so,
+        content_json=a.content_json,
+        keystore=keystore,
+        pass_file=pass_file,
         min_sdk=a.min_sdk,
     )
     try:
@@ -98,6 +108,9 @@ def main(argv=None) -> int:
     pp.add_argument("--force-unverified", action="store_true",
                     help="patch even if the copy is not the fingerprinted 8.12.0 build")
     pp.add_argument("--keystore", help="signing keystore (default ~/.config/sgm-offline/...)")
+    pp.add_argument("--pass-file", help="keystore password file (default: alongside the keystore)")
+    pp.add_argument("--server-so", help="built libsgmserver.so, to embed the server (enables embed-server)")
+    pp.add_argument("--content-json", help="combined content JSON to bundle (for embed-server)")
     pp.add_argument("--min-sdk", type=int, default=24)
     pp.set_defaults(fn=_cmd_patch)
 

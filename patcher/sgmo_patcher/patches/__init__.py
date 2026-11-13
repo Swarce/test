@@ -8,10 +8,10 @@ in what order, and does the signing and verification.
 
 from __future__ import annotations
 
-from . import merge_splits, redirect_api, pairip_neutralize
+from . import merge_splits, redirect_api, pairip_neutralize, pairip_bootstrap, debloat, native_patch, embed_server
 
 #: Patches in apply order. merge-splits first (it adds the native libs and fixes the manifest so the
 #: thing installs), then the metadata redirect, then the dex neutralisation.
-ALL = [merge_splits, redirect_api, pairip_neutralize]
+ALL = [merge_splits, redirect_api, pairip_neutralize, pairip_bootstrap, debloat, native_patch, embed_server]
 
 BY_NAME = {m.NAME: m for m in ALL}

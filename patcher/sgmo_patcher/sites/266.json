@@ -20,5 +20,42 @@
       "sha": "3d20a8c854691bbabef5f71c6a94c2728524cdb402d1b2cec2a50c742be9e0f7",
       "dex": "classes2.dex"
     }
+  },
+  "pairip_bootstrap": {
+    "Lcom/pairip/StartupLauncher;->launch()V": {
+      "sha": "6190ef9c24d3b3f594af4731ad6afbf061aca07f216d90e20c1e379b728b9e66",
+      "dex": "classes2.dex"
+    }
+  },
+  "debloat_providers": {
+    "Landroidx/startup/InitializationProvider;->onCreate()Z": {
+      "sha": "e518092ec0c1c2b8d1a9bea8eca070fd94d0aaf8818d6eaba264ca3ad48744da",
+      "dex": "classes2.dex"
+    },
+    "Lcom/google/android/gms/ads/MobileAdsInitProvider;->onCreate()Z": {
+      "sha": "3eee0b08fa052c50ed72b4ae9486257a113bc9ef48c0d11efbba79dff7458729",
+      "dex": "classes3.dex"
+    },
+    "Lcom/google/firebase/provider/FirebaseInitProvider;->onCreate()Z": {
+      "sha": "ba3772bd823c0743e75b8ce7e96a46e1079da9332717a04599905bbd35903c21",
+      "dex": "classes4.dex"
+    },
+    "Lcom/vungle/ads/VungleProvider;->onCreate()Z": {
+      "sha": "56ed64634b916482cb491c56ddd487ccbbbd5447b0c2bb42003e413a256067f5",
+      "dex": "classes4.dex"
+    },
+    "Lio/bidmachine/BidMachineInitProvider;->onCreate()Z": {
+      "sha": "90dd250fc9ef91b87ad829fc8019da3b4ef8e7666e4cb61a99337ea60b1fdc8c",
+      "dex": "classes4.dex"
+    }
+  },
+  "native_patches": {
+    "libil2cpp_dt_init": "adeb9ce087e37034c26e74f085ed097524540e2f4331841459aa3ac3cfea12ea",
+    "libunity_dt_init": "774ea46cd05d4f753b7a96f4497fbf3564761e541bf398d5a1970bca49215bae",
+    "libnative_googlesignin_dt_init": "fc24fe39526bf0d270eaf3a936c78a0ddd7800fd35ee954556e250a3b6236e8a"
+  },
+  "boot_inject": {
+    "Lcom/pairip/application/Application;->attachBaseContext(Landroid/content/Context;)V": "7c70aaad4bc40c236447bef63914da75c05a3a78ae3ba798cd7dee93e011faa4",
+    "Lcom/pairip/application/Application;->attachBaseContext(Landroid/content/Context;)V_dex": "classes2.dex"
   }
 }

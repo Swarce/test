@@ -150,6 +150,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('inputs', nargs='+')
     ap.add_argument('-o', '--out', default='content')
+    ap.add_argument('--combined', metavar='FILE',
+                    help='also write one merged JSON object {key: record} here, for the embedded '
+                         'server to bundle into the APK (assets/sgm-content.json)')
     a = ap.parse_args()
     t0 = time.time()
     work = tempfile.mkdtemp(prefix='sgm-extract-')
@@ -226,6 +229,13 @@ def main():
                 json.dump(objs, f, indent=1, sort_keys=True)
             total += len(objs)
         print(f'wrote {total} objects in {len(out)} classes to {a.out}/ in {time.time() - t0:.0f}s')
+        if a.combined:
+            merged = {}
+            for objs in out.values():
+                merged.update(objs)
+            with open(a.combined, 'w', encoding='utf-8') as f:
+                json.dump(merged, f, separators=(',', ':'), sort_keys=True)
+            print(f'wrote combined {len(merged)} objects to {a.combined}')
         if errors:
             print('objects that could not be parsed:', dict(errors))
         for need in ('Act', 'Chapter', 'SGMatch', 'Fight', 'VariantCharacterData', 'GameSettings', 'EconomySettings'):

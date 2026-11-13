@@ -53,10 +53,14 @@ final class Sign {
         ApkSigner.SignerConfig signer =
                 new ApkSigner.SignerConfig.Builder("sgm-offline", key, certs).build();
 
+        // v1 (JAR) signing is only needed below API 24; the target is minSdk 24 and the original
+        // APK was not v1-signed either, so for API >= 24 we sign v2+v3 only (research note 09). This
+        // also keeps the reported schemes consistent with what the verifier actually uses.
+        boolean v1 = minSdk < 24;
         ApkSigner.Builder builder = new ApkSigner.Builder(Collections.singletonList(signer))
                 .setInputApk(new File(inPath))
                 .setOutputApk(new File(outPath))
-                .setV1SigningEnabled(true)
+                .setV1SigningEnabled(v1)
                 .setV2SigningEnabled(true)
                 .setV3SigningEnabled(true)
                 .setV4SigningEnabled(false)
@@ -69,7 +73,7 @@ final class Sign {
         out.put("out", outPath);
         out.put("certSha256", certSha256(certs.get(0)));
         List<String> schemes = new ArrayList<>();
-        schemes.add("v1");
+        if (v1) schemes.add("v1");
         schemes.add("v2");
         schemes.add("v3");
         out.put("schemes", schemes);

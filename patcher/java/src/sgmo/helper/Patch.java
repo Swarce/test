@@ -35,7 +35,7 @@ final class Patch {
     private Patch() {}
 
     /** The closed set of stub bodies the patcher may emit. */
-    enum Stub { RETURN_VOID, RETURN_NULL, SUPER_CALL, SUPER_CALL_THEN_FINISH }
+    enum Stub { RETURN_VOID, RETURN_NULL, RETURN_TRUE, RETURN_FALSE, SUPER_CALL, SUPER_CALL_THEN_FINISH }
 
     /** One site to patch, as parsed from the spec. */
     static final class Site {
@@ -224,6 +224,14 @@ final class Patch {
                 code.add(new ImmutableInstruction11x(Opcode.RETURN_OBJECT, 0));
                 return new ImmutableMethodImplementation(regs, code, null, null);
             }
+            case RETURN_TRUE:
+            case RETURN_FALSE: {
+                // const/4 v0, 1|0 ; return v0  (v0 overwrites a param register; we use none)
+                int regs = Math.max(ins, 1);
+                code.add(new ImmutableInstruction11n(Opcode.CONST_4, 0, site.stub == Stub.RETURN_TRUE ? 1 : 0));
+                code.add(new ImmutableInstruction11x(Opcode.RETURN, 0));
+                return new ImmutableMethodImplementation(regs, code, null, null);
+            }
             case SUPER_CALL:
             case SUPER_CALL_THEN_FINISH: {
                 if (isStatic) {
@@ -272,6 +280,12 @@ final class Patch {
             case RETURN_NULL:
                 if (!(ret.startsWith("L") || ret.startsWith("["))) {
                     return "RETURN_NULL stub on non-reference return type " + ret;
+                }
+                return null;
+            case RETURN_TRUE:
+            case RETURN_FALSE:
+                if (!("Z".equals(ret) || "I".equals(ret) || "B".equals(ret) || "S".equals(ret) || "C".equals(ret))) {
+                    return "RETURN_TRUE/FALSE stub on non-int/boolean return type " + ret;
                 }
                 return null;
             case SUPER_CALL:

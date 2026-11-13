@@ -36,5 +36,22 @@ if [ -n "${SGMO_SERVER_CMD:-}" ]; then
     ( cd reference-server && SGMO_SERVER_CMD="$SGMO_SERVER_CMD" "$PY" -m unittest discover -s tests -v ) || fail=1
 fi
 
+if command -v cargo >/dev/null 2>&1; then
+    step "Rust server core: build + unit tests"
+    ( cd server && cargo build --release -p sgm-standalone && cargo test -p sgm-core ) || fail=1
+    if [ -n "${SGMO_CONTENT:-}" ]; then
+        step "Rust server parity: login+startup against the Python conformance suite"
+        BIN="$ROOT/server/target/release/sgm-standalone"
+        ( cd reference-server && SGMO_CONTENT="$SGMO_CONTENT" \
+            SGMO_SERVER_CMD="$BIN --content {content} --db {data} --host 127.0.0.1 --port {port}" \
+            "$PY" -m unittest \
+              tests.test_flow.FlowTest.test_login_creates_and_resumes_user \
+              tests.test_flow.FlowTest.test_startup_calls \
+              tests.test_flow.FlowTest.test_requires_session \
+              tests.test_flow.FlowTest.test_unknown_endpoint_is_harmless \
+              tests.test_flow.FlowTest.test_signature_known_vector ) || fail=1
+    fi
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then echo "BUILD OK"; else echo "BUILD FAILED"; exit 1; fi
