@@ -1,0 +1,12 @@
+[package]
+name = "sgm-embedded"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sgm-core = { path = "../core" }
+
+[lib]
+name = "sgmserver"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
