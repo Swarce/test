@@ -51,3 +51,32 @@ phone: game -> http://127.0.0.1:47820 --(adb reverse)--> PC: 127.0.0.1:47820 ref
 - the server console output (or run it with `2>&1 | tee server.log`);
 - `adb logcat -d -v time > device.log` taken right after the problem;
 - `deliver/sgmo-b01.apk.report.txt`.
+
+## Building the embedded server (M2/b02)
+
+The embedded server is a Rust library built for the phone's ABI with the Android NDK.
+
+```bash
+rustup target add aarch64-linux-android
+# point cargo at the NDK's clang linker (adjust the NDK path):
+export NDK=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin
+export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$NDK/aarch64-linux-android24-clang
+export CC_aarch64_linux_android=$NDK/aarch64-linux-android24-clang AR=$NDK/llvm-ar
+cd server && cargo build --release -p sgm-embedded --target aarch64-linux-android
+# -> server/target/aarch64-linux-android/release/libsgmserver.so
+```
+
+Produce the content bundle and patch with the server embedded:
+
+```bash
+python tools/content-gen/extract_content.py your-skullgirls-8.12.0.xapk -o /tmp/sgm-content \
+    --combined /tmp/sgm-content.json
+cd patcher && python -m sgmo_patcher patch your-skullgirls-8.12.0.xapk -o deliver/sgmo-b02.apk \
+    --enable embed-server \
+    --server-so ../server/target/aarch64-linux-android/release/libsgmserver.so \
+    --content-json /tmp/sgm-content.json
+```
+
+Install it; **no PC server and no `adb reverse` are needed** — the server runs inside the app. Watch
+it start with `adb logcat -s sgm-offline`. The standalone server is still useful for the dev loop and
+is the parity oracle (`SGMO_SERVER_CMD`).

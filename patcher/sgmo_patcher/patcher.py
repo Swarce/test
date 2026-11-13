@@ -31,6 +31,8 @@ class PatchOptions:
     enable: list[str] = field(default_factory=list)       # patches to force on
     disable: list[str] = field(default_factory=list)      # patches to force off
     force_unverified: bool = False
+    server_so: Optional[str] = None
+    content_json: Optional[str] = None
     keystore: Optional[Path] = None
     pass_file: Optional[Path] = None
     min_sdk: int = 24
@@ -91,7 +93,8 @@ def patch(input_paths, out_apk, opts: Optional[PatchOptions] = None, *,
                                       None, str(dropped), f"{dropped} entries removed before re-signing"))
 
         # 2. run the selected patches.
-        ctx = Ctx(apk, plan, sites, {"port": opts.port, "force_unverified": opts.force_unverified})
+        ctx = Ctx(apk, plan, sites, {"port": opts.port, "force_unverified": opts.force_unverified,
+                                     "server_so": opts.server_so, "content_json": opts.content_json})
         for module, on in _selected(opts):
             rec = PatchRecord(name=module.NAME, description=module.DESCRIPTION,
                               status="applied" if on else "off")

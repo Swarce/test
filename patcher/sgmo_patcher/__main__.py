@@ -45,6 +45,8 @@ def _cmd_patch(a) -> int:
         enable=a.enable or [],
         disable=a.disable or [],
         force_unverified=a.force_unverified,
+        server_so=a.server_so,
+        content_json=a.content_json,
         keystore=keystore,
         pass_file=pass_file,
         min_sdk=a.min_sdk,
@@ -107,6 +109,8 @@ def main(argv=None) -> int:
                     help="patch even if the copy is not the fingerprinted 8.12.0 build")
     pp.add_argument("--keystore", help="signing keystore (default ~/.config/sgm-offline/...)")
     pp.add_argument("--pass-file", help="keystore password file (default: alongside the keystore)")
+    pp.add_argument("--server-so", help="built libsgmserver.so, to embed the server (enables embed-server)")
+    pp.add_argument("--content-json", help="combined content JSON to bundle (for embed-server)")
     pp.add_argument("--min-sdk", type=int, default=24)
     pp.set_defaults(fn=_cmd_patch)
 

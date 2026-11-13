@@ -2,6 +2,45 @@
 
 Newest build first. Each build: what changed, test counts, a device checklist, what is open.
 
+## Build 02 — the embedded server (no PC needed)
+
+**Goal:** run the offline server inside the game's own process, so the patched APK reaches the main
+menu with no network and no PC.
+
+**Changed**
+- `server/`: a Rust workspace porting `reference-server` — `core` (protocol, a std-only HTTP server,
+  content loader, float32 game math, the player document + serialization, loot, file storage,
+  routing, the login/startup handlers), `standalone` (the PC binary + the parity oracle harness),
+  and `embedded` (`libsgmserver.so`).
+- Embedded host: a JNI `nativeStart` derives the APK path and a writable data dir from `/proc`, reads
+  the bundled content straight out of the APK, and serves `127.0.0.1:47820` from a background thread.
+- Patcher `embed-server` patch: bundles `libsgmserver.so`, `assets/sgm-content.json` (stored), a
+  `Boot` dex, and injects `Boot.start()` at the top of `Application.attachBaseContext` (fingerprinted).
+- Java helper: `make-boot-dex` and `dex-inject-call`. Content extractor: `--combined`.
+- Docs: `docs/design/embedded-server.md`.
+
+**Tests**
+- Rust core: `cargo build` (host + aarch64-linux-android), unit tests, and the Python conformance
+  suite's login/startup/session/unknown/signature tests pass against the Rust standalone **and**
+  against content read from a stored APK entry.
+- Patcher: 107 tests. The `embed-server` end-to-end test patches the real copy and checks the APK is
+  self-contained (server `.so`, stored content, Boot dex, the injected call), signs (v2+v3), aligns,
+  and that `classes2.dex` changed only in the injected method and the two PairIP gates.
+
+**Device checklist (Galaxy S22, Android 16) — to be confirmed on a device**
+- [ ] Patched APK installs over an uninstalled Play copy.
+- [ ] App launches (PairIP's native VM does not reject the re-signed APK).
+- [ ] `adb logcat -s sgm-offline` shows the server starting (apk/data/port).
+- [ ] Guest login reaches the main menu **with the phone in airplane mode** (no PC, no network).
+- [ ] One story fight is attempted (full fight logic is M3; the menu is the b02 goal).
+
+**Open**
+- The PairIP native-boot question is still the gate (same as b01).
+- Action endpoints (fights, events, store, progression, challenges) return empty shapes; the full
+  handler port is M3+.
+- Content is bundled stored (~30 MB) and held in memory; optimisation is deferred.
+
+
 ## Build 01 — patcher foundations and the first patched APK
 
 **Goal:** turn the player's own 8.12.0 copy into one merged, re-signed APK whose game API points at

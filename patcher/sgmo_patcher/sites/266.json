@@ -20,5 +20,9 @@
       "sha": "3d20a8c854691bbabef5f71c6a94c2728524cdb402d1b2cec2a50c742be9e0f7",
       "dex": "classes2.dex"
     }
+  },
+  "boot_inject": {
+    "Lcom/pairip/application/Application;->attachBaseContext(Landroid/content/Context;)V": "7c70aaad4bc40c236447bef63914da75c05a3a78ae3ba798cd7dee93e011faa4",
+    "Lcom/pairip/application/Application;->attachBaseContext(Landroid/content/Context;)V_dex": "classes2.dex"
   }
 }

@@ -26,6 +26,8 @@ _GATE_KEYS = {
     "Lcom/pairip/SignatureCheck;->verifyIntegrity(Landroid/content/Context;)V",
     "Lcom/pairip/licensecheck/LicenseClient;->checkLicense(Landroid/content/Context;)V",
 }
+# Method the embed-server patch injects the Boot call into (M2).
+_INJECT_KEY = "Lcom/pairip/application/Application;->attachBaseContext(Landroid/content/Context;)V"
 
 
 def _base_apk_bytes(path: str) -> bytes:
@@ -58,15 +60,21 @@ def main(argv) -> int:
         files[n] = sha(base.read(n))
 
     gates: dict[str, dict] = {}
+    boot_inject: dict[str, object] = {}
     for n in dex_names:
         for m in dex.dex_methods(base.read(n)):
             key = f"{m['cls']}->{m['name']}{m['desc']}"
             if key in _GATE_KEYS:
                 gates[key] = {"sha": m["rawSha256"], "dex": n}
+            if key == _INJECT_KEY:
+                boot_inject[key] = m["rawSha256"]
+                boot_inject[f"{key}_dex"] = n
 
     missing = _GATE_KEYS - set(gates)
     if missing:
         raise SystemExit(f"gate method(s) not found: {', '.join(sorted(missing))}")
+    if _INJECT_KEY not in boot_inject:
+        raise SystemExit("Application.attachBaseContext not found")
 
     out = {
         "package": info["package"],
@@ -74,6 +82,7 @@ def main(argv) -> int:
         "versionName": info["versionName"],
         "files": files,
         "pairip_gates": gates,
+        "boot_inject": boot_inject,
     }
     print(json.dumps(out, indent=2))
     return 0

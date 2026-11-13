@@ -59,6 +59,14 @@ public final class Main {
                     Files.write(Paths.get(args[1]), Synth.build());
                     System.out.println(Json.write(mapOf("out", args[1])));
                     break;
+                case "make-boot-dex":
+                    requireArgs(args, 2, "make-boot-dex <out.dex>");
+                    Files.write(Paths.get(args[1]), Boot.buildDex());
+                    System.out.println(Json.write(mapOf("out", args[1])));
+                    break;
+                case "dex-inject-call":
+                    runDexInject(args);
+                    break;
                 case "selftest":
                     SelfTest.run(System.err);
                     System.out.println(Json.write(mapOf("ok", Boolean.TRUE)));
@@ -77,6 +85,27 @@ public final class Main {
         } catch (Throwable t) {
             System.err.println(cmd + ": " + t.getClass().getSimpleName() + ": " + t.getMessage());
             System.exit(1);
+        }
+    }
+
+    private static void runDexInject(String[] args) throws Exception {
+        requireArgs(args, 4, "dex-inject-call <in.dex> <out.dex> <spec.json>");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> m = (Map<String, Object>) Json.parse(readFile(args[3]));
+        Inject.Site site = new Inject.Site();
+        site.cls = str(m, "cls");
+        site.name = str(m, "name");
+        site.desc = str(m, "desc");
+        site.expectRawSha256 = str(m, "expectRawSha256");
+        site.invoke = str(m, "invoke"); // e.g. "Lsgm/offline/Boot;->start()V"
+        Object req = m.get("required");
+        site.required = req == null || Boolean.TRUE.equals(req);
+        Map<String, Object> result = Inject.run(args[1], args[2], site);
+        System.out.println(Json.write(result));
+        if ("mismatch".equals(result.get("status")) || "missing".equals(result.get("status"))) {
+            if (site.required) {
+                System.exit(2);
+            }
         }
     }
 
