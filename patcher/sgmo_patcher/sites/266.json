@@ -1,0 +1,24 @@
+{
+  "package": "com.autumn.skullgirls",
+  "versionCode": 266,
+  "versionName": "8.12.0",
+  "files": {
+    "AndroidManifest.xml": "9e776c9cf417c2be02c719e42227d3eadd42c2b8a8eb7c54c2732290382469b1",
+    "assets/bin/Data/Managed/Metadata/global-metadata.dat": "170245b15cecabc78f6cadb0646bdabe3bf0a0f78b9c0ff727a692be38bd29ae",
+    "classes.dex": "8ae81d0cbc22bdb184e21c170e2b4f4ea919f735e22076db736cd4b687dc3273",
+    "classes2.dex": "b58b53cac4df82dba2546d917b21b1e3913067a9b6242c880ab157e6641bd8d1",
+    "classes3.dex": "386ebcb6b7baa366122e7c5017de7cf41215c727d9a15b6c0c14b85786505502",
+    "classes4.dex": "ebe21c7380bdb1057ba2886cbe179a27a698e0329d67fb2124cf473e7a1d6051",
+    "classes5.dex": "fbf5fcedae42de8539ed6f4c14a8aff73f253ba45864dd934ece247b5590a94d"
+  },
+  "pairip_gates": {
+    "Lcom/pairip/SignatureCheck;->verifyIntegrity(Landroid/content/Context;)V": {
+      "sha": "6856a812e75955e669f8f528540c77d622522e5c9868b89e69b22ad7bf48b622",
+      "dex": "classes2.dex"
+    },
+    "Lcom/pairip/licensecheck/LicenseClient;->checkLicense(Landroid/content/Context;)V": {
+      "sha": "3d20a8c854691bbabef5f71c6a94c2728524cdb402d1b2cec2a50c742be9e0f7",
+      "dex": "classes2.dex"
+    }
+  }
+}
