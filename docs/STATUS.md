@@ -2,6 +2,28 @@
 
 Newest build first. Each build: what changed, test counts, a device checklist, what is open.
 
+## Build 07 (diagnostic) — isolate what PairIP's DT_INIT checks
+
+**Device finding (b06):** the DT_INIT patch removed the `libpairipcore.so` crash, but the app then
+died with **SIGILL** deep in `libunity.so` during `call_constructors` (the `INIT_ARRAY`), reached via
+`UnityPlayer.loadNative`. Static analysis of the crash site showed the bytes there are **encrypted**
+(not valid code, not zero). So PairIP's DT_INIT `ExecuteProgram` **decrypts selected functions** at
+load — it is not integrity-only — and neutralising it leaves those functions encrypted, so the first
+call into one executes garbage (SIGILL). **Conclusion: DT_INIT cannot be skipped; it must run.** In
+b05 (DT_INIT running) it crashed *during* its work because our changes fail its check.
+
+**b07 is a diagnostic, not a fix.** It keeps `global-metadata.dat` byte-identical to the original (no
+`redirect-api`) and lets DT_INIT run (no `native-patch`), with the dex stubs, provider removal and
+re-sign still in place. The result tells us what DT_INIT checks:
+- **Boots / past the `libunity` SIGILL** → DT_INIT tolerates the dex/manifest/signature changes, and
+  the metadata redirect was the trigger → redirect a different way (a native `connect()`/`getaddrinfo`
+  hook in the embedded server, metadata left pristine).
+- **Crashes again in `libpairipcore.so`** → DT_INIT checks the dex, manifest or the signature; the
+  signature is re-signed and can't match, so that path needs either decrypted-library dumping (root)
+  or patching the native signature comparison.
+
+`native-patch` is now documented as decryption-breaking and is not in the default flow.
+
 ## Build 06 — native patch: PairIP's per-library integrity DT_INIT
 
 **Device finding (b05):** boot gets much further — our embedded server starts, the window is

@@ -11,7 +11,14 @@ an indirect call with branch-target identification still lands) and writes a ``r
 ``ExecuteProgram`` is never called. ``ExecuteProgram`` itself is untouched, so any legitimate use of
 it still works. Each DT_INIT is fingerprinted against the verified build.
 
-Off by default; enabled for the native-tamper experiments (b06+).
+**CAUTION (b06 device finding):** on this build the DT_INIT ``ExecuteProgram`` does **not** only
+check integrity — it also *decrypts* selected functions in the library (those regions are encrypted
+in the file on disk). Skipping it therefore leaves those functions encrypted, and calling one
+executes garbage (SIGILL). So this patch is only safe together with libraries whose encrypted
+functions are already decrypted (e.g. dumped from a running process). On its own it will crash the
+game as the Unity libraries load. Kept for that future use; not part of the default flow.
+
+Off by default; was enabled for the b06 experiment only.
 """
 
 from __future__ import annotations
