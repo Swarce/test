@@ -28,6 +28,10 @@ _GATE_KEYS = {
 }
 # Method the embed-server patch injects the Boot call into (M2).
 _INJECT_KEY = "Lcom/pairip/application/Application;->attachBaseContext(Landroid/content/Context;)V"
+# PairIP bootstrap methods that run its native VM programs (b03 native-tamper work).
+_BOOTSTRAP_KEYS = {
+    "Lcom/pairip/StartupLauncher;->launch()V",
+}
 
 
 def _base_apk_bytes(path: str) -> bytes:
@@ -60,12 +64,15 @@ def main(argv) -> int:
         files[n] = sha(base.read(n))
 
     gates: dict[str, dict] = {}
+    bootstrap: dict[str, dict] = {}
     boot_inject: dict[str, object] = {}
     for n in dex_names:
         for m in dex.dex_methods(base.read(n)):
             key = f"{m['cls']}->{m['name']}{m['desc']}"
             if key in _GATE_KEYS:
                 gates[key] = {"sha": m["rawSha256"], "dex": n}
+            if key in _BOOTSTRAP_KEYS:
+                bootstrap[key] = {"sha": m["rawSha256"], "dex": n}
             if key == _INJECT_KEY:
                 boot_inject[key] = m["rawSha256"]
                 boot_inject[f"{key}_dex"] = n
@@ -82,6 +89,7 @@ def main(argv) -> int:
         "versionName": info["versionName"],
         "files": files,
         "pairip_gates": gates,
+        "pairip_bootstrap": bootstrap,
         "boot_inject": boot_inject,
     }
     print(json.dumps(out, indent=2))

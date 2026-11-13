@@ -2,6 +2,31 @@
 
 Newest build first. Each build: what changed, test counts, a device checklist, what is open.
 
+## Build 03 — native anti-tamper: experiment 1 (stop the startup VM program)
+
+**Device finding (b02, Galaxy S22 / Android 16):** the app crashes at launch with SIGSEGV
+(SEGV_ACCERR) **inside `libpairipcore.so`** (`pc 0x37b0c`), ~2 s in, right after the library loads
+from `classes2.dex`, and loops. This is PairIP's native startup integrity program detecting the
+repackage (re-sign + modified `classes2.dex`/metadata) — the open question from b01/b02, now
+answered. It happens in `…CoreComponentFactory.<clinit> → StartupLauncher.launch()`, **before** our
+`Boot` hook, so the embedded server never ran. The same check would stop b01 too.
+
+**Changed (b03)**
+- `pairip-bootstrap-stubs` patch (off by default): stub `StartupLauncher.launch()` → return-void, so
+  PairIP's startup VM program never runs. Fingerprinted; `libpairipcore.so` and the encrypted assets
+  are untouched. `sites/266.json` gains the `launch()` fingerprint.
+
+**Experiment:** b03 = b02 + `pairip-bootstrap-stubs`. Two possible outcomes on-device: (a) it boots
+further / to the menu (the startup program was the only early anti-tamper), or (b) it crashes later
+in `libil2cpp.so`'s `DT_INIT` (a second native program `ExecuteProgram("EE9dHUAG90EJYLZv")`), which
+would need a native patch — the next step per the owner's decision.
+
+**Device checklist**
+- [ ] App gets past the `libpairipcore.so` startup crash.
+- [ ] If it crashes, capture the new tombstone: is it still `libpairipcore.so`, or now `libil2cpp.so`?
+- [ ] `adb logcat -s sgm-offline` — does the embedded server start now?
+
+
 ## Build 02 — the embedded server (no PC needed)
 
 **Goal:** run the offline server inside the game's own process, so the patched APK reaches the main

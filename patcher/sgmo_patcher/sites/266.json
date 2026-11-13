@@ -21,6 +21,12 @@
       "dex": "classes2.dex"
     }
   },
+  "pairip_bootstrap": {
+    "Lcom/pairip/StartupLauncher;->launch()V": {
+      "sha": "6190ef9c24d3b3f594af4731ad6afbf061aca07f216d90e20c1e379b728b9e66",
+      "dex": "classes2.dex"
+    }
+  },
   "boot_inject": {
     "Lcom/pairip/application/Application;->attachBaseContext(Landroid/content/Context;)V": "7c70aaad4bc40c236447bef63914da75c05a3a78ae3ba798cd7dee93e011faa4",
     "Lcom/pairip/application/Application;->attachBaseContext(Landroid/content/Context;)V_dex": "classes2.dex"
